@@ -1,11 +1,13 @@
-import AddItem from './components/AddItem';
-import './App.css';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { FilesPage } from './pages/FilesPage';
 
 const App = () => {
   return (
-    <div>
-      <AddItem />
-    </div>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<FilesPage />} />
+      </Routes>
+    </BrowserRouter>
   );
 };
 
