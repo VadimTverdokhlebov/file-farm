@@ -4,6 +4,7 @@ package filefarm.file;
 
 service FileService {
     rpc UploadFile(UploadFileRequest) returns (UploadFileResponse);
+    rpc DownloadFile(DownloadFileRequest) returns (DownloadFileResponse);
 }
 
 message UploadFileRequest {
@@ -16,5 +17,14 @@ message UploadFileResponse {
     string message = 1;
     int64 file_size = 2;
     bool success = 3;
+}
+
+message DownloadFileRequest {
+    string filename = 1;
+}
+
+message DownloadFileResponse {
+    bytes content = 1;
+    string mimetype = 2;
 }
 

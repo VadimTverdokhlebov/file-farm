@@ -12,7 +12,6 @@ import { ENVIRONMENT, GRPC_PORT } from './utils/secrets';
         } else {
             server.start();
             logger.info(`Server running at http://127.0.0.1:${GRPC_PORT} in ${ENVIRONMENT} mode.`);
-            logger.info(`Services: UserService, FileService`);
         }
     });
 })();

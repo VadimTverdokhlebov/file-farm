@@ -30,6 +30,13 @@ npm update -g npm
 ---
 ## <b>Production Deployment using Docker</b>
 
+
+## Generate proto
+
+ ```bash
+ npm run gen:proto
+ ```
+
 ```csharp
 Note :'Dont Forget to add your env variables.'
 ```
