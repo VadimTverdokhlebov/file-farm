@@ -1,0 +1,80 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>File Upload Client</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2rem; }
+    .box { max-width:600px; margin:auto; }
+    input[type=file] { display:block; margin-bottom:1rem; }
+    button { padding: .5rem 1rem; }
+    pre { background:#f6f6f6; padding:1rem; white-space:pre-wrap; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1>Upload file (CSV / PDF / other)</h1>
+    <input id="file" type="file" />
+    <button id="upload">Upload</button>
+    <p id="status"></p>
+
+    <h2>Recent processed</h2>
+    <button id="refresh">Refresh list</button>
+    <div id="list"></div>
+  </div>
+
+  <script>
+    const uploadBtn = document.getElementById('upload');
+    const fileInput = document.getElementById('file');
+    const status = document.getElementById('status');
+    const listDiv = document.getElementById('list');
+    const refreshBtn = document.getElementById('refresh');
+
+    uploadBtn.onclick = async () => {
+      const f = fileInput.files[0];
+      if (!f) { status.textContent = 'Выберите файл'; return; }
+      status.textContent = 'Загрузка...';
+
+      const form = new FormData();
+      form.append('file', f);
+
+      try {
+        const res = await fetch('/api/upload', { method: 'POST', body: form });
+        const data = await res.json();
+        if (!res.ok) {
+          status.textContent = 'Ошибка: ' + (data.error || res.statusText);
+        } else {
+          status.textContent = 'Успешно: id=' + data.id + ' (обработал PID=' + (data.pid||'') + ')';
+          refreshList();
+        }
+      } catch (err) {
+        status.textContent = 'Ошибка запроса: ' + err.message;
+      }
+    };
+
+    async function refreshList() {
+      listDiv.innerHTML = 'Загрузка...';
+      try {
+        const res = await fetch('/api/list');
+        const data = await res.json();
+        if (!res.ok) { listDiv.textContent = 'Ошибка: ' + (data.error || res.statusText); return; }
+        if (!data.items || !data.items.length) { listDiv.textContent = 'Нет обработанных файлов'; return; }
+
+        const html = data.items.map(it => {
+          return `<div style="border:1px solid #ddd;padding:8px;margin:6px 0;">
+            <b>${it.original_name}</b> (${it.ext}) — ${new Date(it.created_at).toLocaleString()}<br/>
+            <pre>${JSON.stringify(it.content_summary, null, 2)}</pre>
+          </div>`;
+        }).join('');
+        listDiv.innerHTML = html;
+      } catch (err) {
+        listDiv.textContent = 'Ошибка: ' + err.message;
+      }
+    }
+
+    refreshBtn.onclick = refreshList;
+    // initial
+    refreshList();
+  </script>
+</body>
+</html>

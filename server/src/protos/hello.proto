@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package HelloServicePackage;
+
+service HelloService {
+    rpc ServiceHello(RequestHello) returns (ResponseHello);
+}
+
+message RequestHello{
+    string text = 1;
+}
+
+message ResponseHello{
+    string text = 1;
+}
+
+service WorldService {
+    rpc ServiceWorld(RequestWorld) returns (ResponseWorld);
+}
+
+message RequestWorld{
+    string name = 1;
+    int32 id = 2;
+}
+
+message ResponseWorld{
+    string name = 1;
+    int32 id = 2;
+}
+
