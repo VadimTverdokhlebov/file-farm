@@ -1,52 +1,29 @@
-## </b>Local Deployment</b>
-### Step 1 : To install all the dependencies
- 
- ```bash
- npm install
- ```
-
-### If needed update dependencies
+## Install project
 
 ```bash
-npm update -g npm
+npm install
 ```
 
-### Step 2 : To set .env variables on a Linux machine or a UNIX machine
- 
- ```bash
- export $(cat .env | xargs)
- ```
-### Step 3 : To run the Server in devlopment mode
- 
- ```bash
- npm run dev
- ```
+### Create an environment
 
-### Step 3 : To run the Server in production mode
- 
- ```bash
- npm start
- ```
----
-## <b>Production Deployment using Docker</b>
-
-
-## Generate proto
-
- ```bash
- npm run gen:proto
- ```
-
-```csharp
-Note :'Dont Forget to add your env variables.'
-```
-### Step 1 : Build your Docker image by running the following command 
 ```bash
-docker build -t <your-project-name> .
+cp .env.example .env
 ```
 
-### Step 2 : Run your Docker image by running the following command 
+### Run server development mode
+ 
 ```bash
-docker run -p <project-port>:<mapping-port> <your-project-name>
+npm run dev
 ```
-----
+
+### Run server production mode
+ 
+```bash
+npm run build && npm start
+```
+
+### Generate proto
+
+```bash
+npm run gen:proto
+```
