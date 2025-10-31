@@ -1,0 +1,8 @@
+.card-list {
+    padding: 30px;
+    margin-top: 50px;
+}
+.card-list > * {
+    margin: 10;
+}
+  
