@@ -43,4 +43,3 @@ docker build -t <your-project-name> .
 docker run -p <project-port>:<mapping-port> <your-project-name>
 ```
 ----
-© 2022 Silicon Ninja

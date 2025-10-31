@@ -1,6 +1,6 @@
 import logger from '../utils/logger';
-import { RequestHello } from '../controller/HelloServicePackage/RequestHello';
-import { ResponseHello } from '../controller/HelloServicePackage/ResponseHello';
+import { RequestHello } from '../generated/filefarm/hello/RequestHello';
+import { ResponseHello } from '../generated/filefarm/hello/ResponseHello';
 import { ServerUnaryCall, sendUnaryData } from '@grpc/grpc-js';
 
 export function Service_Call_Hello(

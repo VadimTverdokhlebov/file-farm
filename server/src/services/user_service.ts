@@ -1,9 +1,9 @@
 import { ServerUnaryCall, sendUnaryData } from '@grpc/grpc-js';
 import { generateUUID } from '../utils/uuid';
-import { GetUserRequest } from '../controller/UserPackage/GetUserRequest';
-import { GetUserResponse } from '../controller/UserPackage/GetUserResponse';
-import { CreateUserRequest } from '../controller/UserPackage/CreateUserRequest';
-import { CreateUserResponse } from '../controller/UserPackage/CreateUserResponse';
+import { GetUserRequest } from '../generated/filefarm/user/GetUserRequest';
+import { GetUserResponse } from '../generated/filefarm/user/GetUserResponse';
+import { CreateUserRequest } from '../generated/filefarm/user/CreateUserRequest';
+import { CreateUserResponse } from '../generated/filefarm/user/CreateUserResponse';
 
 interface IUser {
     login: string | undefined;

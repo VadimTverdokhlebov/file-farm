@@ -1,0 +1,7 @@
+syntax = "proto3";
+
+package filefarm;
+
+import "user.proto";
+import "file.proto";
+import "hello.proto";

@@ -2,21 +2,24 @@ import * as grpc from '@grpc/grpc-js';
 import path from 'path';
 import * as protoLoader from '@grpc/proto-loader';
 import { GRPC_PROTO_FILE } from './utils/secrets';
-import { ProtoGrpcType } from './controller/user';
-import { UserServiceHandlers } from './controller/UserPackage/UserService';
-import { CreateUser, GetUser } from './services/UserService';
+import { ProtoGrpcType } from './generated/service';
+import { UserServiceHandlers } from './generated/filefarm/user/UserService';
+import { FileServiceHandlers } from './generated/filefarm/file/FileService';
+import { CreateUser, GetUser } from './services/user_service';
+import { UploadFile } from './services/file_service';
 
 const protoFilePath = path.resolve(__dirname, GRPC_PROTO_FILE!);
-console.log('protoFilePath:', protoFilePath);
+const servicePackageDef = protoLoader.loadSync(protoFilePath);
+const serviceGrpcObject = grpc.loadPackageDefinition(servicePackageDef) as unknown as ProtoGrpcType;
 
-const packageDefinition = protoLoader.loadSync(protoFilePath);
-const grpcObject = grpc.loadPackageDefinition(packageDefinition) as unknown as ProtoGrpcType;
-const UserService = grpcObject.UserPackage.UserService.service;
+const UserService = serviceGrpcObject.filefarm.user.UserService.service;
+const FileService = serviceGrpcObject.filefarm.file.FileService.service;
 
 export default function getServer() {
     const server = new grpc.Server();
 
     server.addService(UserService, { CreateUser, GetUser } as UserServiceHandlers);
+    server.addService(FileService, { UploadFile } as FileServiceHandlers);
 
     return server;
 }

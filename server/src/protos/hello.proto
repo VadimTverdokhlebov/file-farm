@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package HelloServicePackage;
+package filefarm.hello;
 
 service HelloService {
     rpc ServiceHello(RequestHello) returns (ResponseHello);
