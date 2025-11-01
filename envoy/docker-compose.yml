@@ -8,11 +8,11 @@ services:
       - .env
       - ../.env
     environment:
-      ENVOY_PORT: ${ENVOY_PORT:-8080}
-      ENVOY_BACKEND_HOST: ${ENVOY_BACKEND_HOST:-app}
-      ENVOY_BACKEND_PORT: ${ENVOY_BACKEND_PORT:-50051}
+      ENVOY_PORT: ${ENVOY_PORT}
+      ENVOY_BACKEND_HOST: ${ENVOY_BACKEND_HOST}
+      ENVOY_BACKEND_PORT: ${ENVOY_BACKEND_PORT}
     ports:
-      - "${ENVOY_PORT:-8080}:${ENVOY_PORT:-8080}"
+      - "${ENVOY_PORT}:${ENVOY_PORT}"
     volumes:
       - ./envoy.yaml:/etc/envoy/envoy.yaml:ro
     networks:
