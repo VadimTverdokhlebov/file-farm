@@ -6,13 +6,12 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        VITE_API_URL: ${CLIENT_API_URL:-http://localhost:8080}
+        VITE_API_URL: ${VITE_API_URL}
     container_name: file-farm-client
     env_file:
       - .env
-      - ../.env
     ports:
-      - "${CLIENT_PORT:-5173}:5173"
+      - "${CLIENT_PORT}:${CLIENT_PORT}"
     networks:
       - appnet
     restart: unless-stopped
@@ -21,4 +20,3 @@ networks:
   appnet:
     external: true
     name: appnet
-

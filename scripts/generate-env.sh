@@ -42,7 +42,13 @@ for SERVICE in server postgres envoy client; do
         client)
             echo "" >> "$SERVICE_ENV_FILE"
             echo "# Client-specific" >> "$SERVICE_ENV_FILE"
-            echo "VITE_API_URL=\${CLIENT_API_URL:-http://localhost:8080}" >> "$SERVICE_ENV_FILE"
+            # Read CLIENT_API_URL from root .env if exists
+            CLIENT_API_URL_VALUE=$(grep "^CLIENT_API_URL=" "$ROOT_ENV_FILE" 2>/dev/null | cut -d '=' -f2- || echo "")
+            if [ -n "$CLIENT_API_URL_VALUE" ]; then
+                echo "VITE_API_URL=${CLIENT_API_URL_VALUE}" >> "$SERVICE_ENV_FILE"
+            else
+                echo "# VITE_API_URL will be set from CLIENT_API_URL at build time" >> "$SERVICE_ENV_FILE"
+            fi
             ;;
     esac
     

@@ -3,21 +3,19 @@ version: "3.8"
 services:
   app:
     build:
-      context: ..  # Build from project root to access protos/
+      context: ..
       dockerfile: server/Dockerfile
     container_name: file-farm-server
     env_file:
-      - .env  # Use local .env file for this service
-      - ../.env  # Also load root .env as fallback
+      - .env
     environment:
-      GRPC_PORT: ${GRPC_PORT:-50051}
-      ENVIRONMENT: ${ENVIRONMENT:-production}
-      DATABASE_URL: ${DATABASE_URL:-postgres://app:secret@postgres:5432/appdb}
-      MONGODB_URI: ${MONGODB_URI:-}
-      GRPC_PROTO_FILE: ${GRPC_PROTO_FILE:-protos/service.proto}
-      FILES_DIR: ${FILES_DIR:-/src/uploads}
+      GRPC_PORT: ${GRPC_PORT}
+      ENVIRONMENT: ${ENVIRONMENT}
+      DATABASE_URL: ${DATABASE_URL}
+      GRPC_PROTO_FILE: ${GRPC_PROTO_FILE}
+      FILES_DIR: ${FILES_DIR}
     ports:
-      - "${GRPC_PORT:-50051}:${GRPC_PORT:-50051}"
+      - "${GRPC_PORT}:${GRPC_PORT}"
     networks:
       - appnet
     volumes:
