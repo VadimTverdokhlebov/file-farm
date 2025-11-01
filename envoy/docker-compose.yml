@@ -1,0 +1,17 @@
+version: "3.8"
+services:
+  envoy:
+    image: envoyproxy/envoy:v1.33-latest
+    container_name: file-farm-envoy
+    ports:
+      - '8080:8080'
+    volumes:
+      - ./envoy.yaml:/etc/envoy/envoy.yaml
+    networks:
+      - appnet
+    restart: unless-stopped
+
+networks:
+  appnet:
+    external: true
+    name: appnet

@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
-import { fileService } from '../api/fileService';
+import { handleUploadFile, handleDownloadFile } from '../api/fileService';
 import './FilesPage.css';
 
 export const FilesPage = () => {
@@ -34,27 +34,25 @@ export const FilesPage = () => {
       const arrayBuffer = await selectedFile.arrayBuffer();
       const uint8Array = new Uint8Array(arrayBuffer);
 
-      const response = await fileService.uploadFile({
-        filename: selectedFile.name,
-        content: uint8Array,
-        mimetype: selectedFile.type || 'application/octet-stream',
-      });
+      const response = await handleUploadFile(selectedFile.name, uint8Array, selectedFile.type || 'application/octet-stream');
 
-      setUploadStatus(`Success: ${response.message} (${(response.fileSize / 1024).toFixed(2)} KB)`);
-      setSelectedFile(null);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
+      if (response.success) {
+        setUploadStatus(`Success: ${response.message}`);
+        setSelectedFile(null);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+      } else {
+        setUploadStatus(`Error: ${response.message || 'Upload failed'}`);
       }
     } catch (error) {
-      setUploadStatus(
-        `Error: ${error instanceof Error ? error.message : 'Failed to upload file'}`
-      );
+      setUploadStatus(`Error: ${error instanceof Error ? error.message : 'Failed to upload file'}`);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleDownload = async () => {
+    const handleDownload = async () => {
     if (!downloadFileName.trim()) {
       setDownloadStatus('Please enter a file name');
       return;
@@ -64,32 +62,25 @@ export const FilesPage = () => {
     setDownloadStatus(null);
 
     try {
-      const response = await fileService.downloadFile({
-        filename: downloadFileName,
-      });
+      const content = await handleDownloadFile(downloadFileName);
+      
+      if (!content || content.length === 0) {
+        setDownloadStatus('File not found');
+        return;
+      }
 
-      // Create blob and download
-      const contentArray = response.content instanceof Uint8Array 
-        ? response.content 
-        : new Uint8Array(response.content);
-      // Convert to ArrayBuffer if needed
-      const buffer = contentArray.buffer.slice(0, contentArray.byteLength);
-      const blob = new Blob([buffer as ArrayBuffer], { type: response.mimetype });
+      // Create blob and trigger download
+      const blob = new Blob([content]);
       const url = URL.createObjectURL(blob);
-
       if (downloadLinkRef.current) {
         downloadLinkRef.current.href = url;
         downloadLinkRef.current.download = downloadFileName;
         downloadLinkRef.current.click();
+        URL.revokeObjectURL(url);
       }
-
-      URL.revokeObjectURL(url);
-      setDownloadStatus(`File "${downloadFileName}" downloaded successfully`);
-      setDownloadFileName('');
+      setDownloadStatus(`Success: File downloaded`);
     } catch (error) {
-      setDownloadStatus(
-        `Error: ${error instanceof Error ? error.message : 'Failed to download file'}`
-      );
+      setDownloadStatus(`Error: ${error instanceof Error ? error.message : 'Failed to download file'}`);
     } finally {
       setLoading(false);
     }

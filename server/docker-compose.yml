@@ -1,0 +1,25 @@
+version: "3.8"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: file-farm-server
+    environment:
+      GRPC_PORT: 50051
+      ENVIRONMENT: production
+      MONGODB_URI: mongodb://localhost:27017/filefarm
+      GRPC_PROTO_FILE: protos/service.proto
+    ports:
+      - "50051:50051"  # Expose gRPC port
+    networks:
+      - appnet
+    volumes:
+      - ./logs:/src/logs
+    restart: unless-stopped
+
+networks:
+  appnet:
+    name: appnet
+    driver: bridge

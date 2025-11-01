@@ -5,13 +5,16 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "gen:proto": "proto-loader-gen-types --grpcLib=@grpc/grpc-js --outDir=src/generated/ src/protos/*.proto",
+    "gen:proto": "rm -rf src/generated && mkdir -p src/generated && protoc -I=src/protos --ts_out=src/generated src/protos/*.proto",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@protobuf-ts/grpcweb-transport": "^2.11.1",
+    "@protobuf-ts/plugin": "^2.11.1",
     "@types/protobufjs": "^6.0.0",
+    "google-protobuf": "^4.0.0",
     "grpc-web": "^2.0.2",
     "protobufjs": "^7.5.4",
     "react": "^19.0.0",
@@ -28,6 +31,7 @@
     "eslint-plugin-react-hooks": "^5.1.0",
     "eslint-plugin-react-refresh": "^0.4.19",
     "globals": "^15.15.0",
+    "protoc-gen-grpc-web": "^1.5.0",
     "ts-proto": "^2.8.3",
     "typescript": "~5.7.2",
     "typescript-eslint": "^8.24.1",
