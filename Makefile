@@ -18,37 +18,86 @@ help:
 	@echo "Maintenance:"
 	@echo "  make clean            - Remove all containers and volumes"
 
-env:
+init:
+	@echo ""
+	@echo "Initializing environment..."
+	@echo ""
+	@cp .env.example .env
 	cp .env ./postgres/.env
-	cp .env ./server/.env
 	cp .env ./envoy/.env
 	cp .env ./client/.env
+	cp .env ./server/.env
+	@echo ""
+	@echo "Initializing server..."
+	@echo ""
+	@cd server && npm ci
+	@echo ""
+	@echo "Initializing client..."
+	@echo ""
+	@cd client && npm ci
+	@echo ""
+	@echo "Initialization complete!"
 
-build:
-	@cd postgres && docker-compose build
-	@cd server && docker-compose build
-	@cd envoy && docker-compose build
-	@cd client && docker-compose build
+up-server:
+	@cd server && docker-compose up -d
 
-rebuild:
-	@cd postgres && docker-compose build --no-cache
-	@cd server && docker-compose build --no-cache
-	@cd envoy && docker-compose build --no-cache
-	@cd client && docker-compose build --no-cache
+up-client:
+	@cd client && docker-compose up -d
+
+up-envoy:
+	@cd envoy && docker-compose up -d
+
+up-postgres:
+	@cd postgres && docker-compose up -d
+	@sleep 2
 
 up:
-	@cd postgres && docker-compose up -d
-	@sleep 3
-	@cd server && docker-compose up -d
-	@cd envoy && docker-compose up -d
-	@cd client && docker-compose up -d
-	@echo "All services started!"
+	@make up-postgres
+	@make up-server
+	@make up-envoy
+	@make up-client
+
+build-server:
+	@cd server && docker-compose build
+
+build-client:
+	@cd client && docker-compose build
+
+build-envoy:
+	@cd envoy && docker-compose build
+
+build-postgres:
+	@cd postgres && docker-compose build
+
+build:
+	@make build-server
+	@make build-client
+	@make build-envoy
+	@make build-postgres
+
+rebuild:
+	@cd server && docker-compose build --no-cache
+	@cd client && docker-compose build --no-cache
+	@cd envoy && docker-compose build --no-cache
+	@cd postgres && docker-compose build --no-cache
+
+down-server:
+	@cd server && docker-compose down
+
+down-client:
+	@cd client && docker-compose down
+
+down-envoy:
+	@cd envoy && docker-compose down
+
+down-postgres:
+	@cd postgres && docker-compose down
 
 down:
-	@cd client && docker-compose down
-	@cd envoy && docker-compose down
-	@cd server && docker-compose down
-	@cd postgres && docker-compose down
+	@make down-server
+	@make down-client
+	@make down-envoy
+	@make down-postgres
 
 logs-server:
 	@cd server && docker-compose logs -f
@@ -63,8 +112,8 @@ logs-client:
 	@cd client && docker-compose logs -f
 
 clean:
+	@cd server && docker-compose down -v
 	@cd client && docker-compose down -v
 	@cd envoy && docker-compose down -v
-	@cd server && docker-compose down -v
 	@cd postgres && docker-compose down -v
 	@-docker network rm appnet 2>/dev/null || true
