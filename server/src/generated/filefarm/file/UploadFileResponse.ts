@@ -1,4 +1,4 @@
-// Original file: src/protos/file.proto
+// Original file: ../protos/file.proto
 
 import type { Long } from '@grpc/proto-loader';
 

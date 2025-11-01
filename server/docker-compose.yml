@@ -3,16 +3,19 @@ version: "3.8"
 services:
   app:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..  # Build from project root to access protos/
+      dockerfile: server/Dockerfile
     container_name: file-farm-server
+    env_file:
+      - ../.env  # Use common .env from project root (relative to server/)
     environment:
-      GRPC_PORT: 50051
-      ENVIRONMENT: production
-      MONGODB_URI: mongodb://localhost:27017/filefarm
-      GRPC_PROTO_FILE: protos/service.proto
+      GRPC_PORT: ${GRPC_PORT:-50051}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      DATABASE_URL: ${DATABASE_URL:-postgres://app:secret@postgres:5432/appdb}
+      MONGODB_URI: ${MONGODB_URI:-}
+      GRPC_PROTO_FILE: ${GRPC_PROTO_FILE:-protos/service.proto}
     ports:
-      - "50051:50051"  # Expose gRPC port
+      - "${GRPC_PORT:-50051}:${GRPC_PORT:-50051}"
     networks:
       - appnet
     volumes:
@@ -21,5 +24,5 @@ services:
 
 networks:
   appnet:
+    external: true
     name: appnet
-    driver: bridge

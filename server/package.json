@@ -5,8 +5,8 @@
   "scripts": {
     "dev": "nodemon",
     "start": "node build/server.js",
-    "gen:proto": "proto-loader-gen-types --grpcLib=@grpc/grpc-js --outDir=src/generated/ src/protos/*.proto",
-    "build": "rimraf ./build && tsc -p . && cp -r src/protos build/protos",
+    "gen:proto": "rm -rf src/generated && mkdir -p src/generated && proto-loader-gen-types --grpcLib=@grpc/grpc-js --outDir=src/generated/ ../protos/*.proto",
+    "build": "rimraf ./build && tsc -p . && cp -r ../protos build/protos",
     "debug": "GRPC_VERBOSITY=DEBUG GRPC_TRACE=all nodemon"
   },
   "author": "Vadim Tverdokhlebov",

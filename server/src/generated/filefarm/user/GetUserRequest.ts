@@ -1,4 +1,4 @@
-// Original file: src/protos/user.proto
+// Original file: ../protos/user.proto
 
 
 export interface GetUserRequest {

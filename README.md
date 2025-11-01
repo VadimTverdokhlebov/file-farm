@@ -25,3 +25,10 @@ make logs-envoy
 
 # Полная очистка
 make clean
+
+### Regenerate after proto changes:
+```bash
+# Update proto files in protos/
+# Then regenerate for both:
+cd server && npm run gen:proto && cd ../client && npm run gen:proto
+```

@@ -68,17 +68,7 @@ export const FilesPage = () => {
         setDownloadStatus('File not found');
         return;
       }
-
-      // Create blob and trigger download
-      const blob = new Blob([content]);
-      const url = URL.createObjectURL(blob);
-      if (downloadLinkRef.current) {
-        downloadLinkRef.current.href = url;
-        downloadLinkRef.current.download = downloadFileName;
-        downloadLinkRef.current.click();
-        URL.revokeObjectURL(url);
-      }
-      setDownloadStatus(`Success: File downloaded`);
+      setDownloadStatus(`${content}`);
     } catch (error) {
       setDownloadStatus(`Error: ${error instanceof Error ? error.message : 'Failed to download file'}`);
     } finally {
