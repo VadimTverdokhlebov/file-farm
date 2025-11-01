@@ -5,7 +5,8 @@ services:
     image: postgres:15
     container_name: file-farm-postgres
     env_file:
-      - ../.env  # Use common .env from project root
+      - .env  # Use local .env file for this service
+      - ../.env  # Also load root .env as fallback
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-app}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secret}

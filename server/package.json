@@ -6,13 +6,15 @@
     "dev": "nodemon",
     "start": "node build/server.js",
     "gen:proto": "rm -rf src/generated && mkdir -p src/generated && proto-loader-gen-types --grpcLib=@grpc/grpc-js --outDir=src/generated/ ../protos/*.proto",
-    "build": "rimraf ./build && tsc -p . && cp -r ../protos build/protos",
+    "build": "rimraf ./build && tsc -p . && (cp -r ../protos build/protos 2>/dev/null || cp -r ./protos build/protos 2>/dev/null || true)",
     "debug": "GRPC_VERBOSITY=DEBUG GRPC_TRACE=all nodemon"
   },
   "author": "Vadim Tverdokhlebov",
   "license": "ISC",
   "devDependencies": {
     "@types/node": "^17.0.30",
+    "@types/pg": "^8.10.9",
+    "@types/uuid": "^9.0.7",
     "rimraf": "^3.0.2",
     "ts-node": "^10.7.0",
     "typescript": "^4.6.4"
@@ -22,6 +24,10 @@
     "@types/google-protobuf": "^3.15.6",
     "dotenv": "^16.0.0",
     "nodemon": "^3.1.10",
-    "winston": "^3.7.2"
+    "winston": "^3.7.2",
+    "typeorm": "^0.3.17",
+    "pg": "^8.11.3",
+    "reflect-metadata": "^0.1.13",
+    "uuid": "^9.0.1"
   }
 }

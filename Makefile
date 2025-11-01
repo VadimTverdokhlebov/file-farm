@@ -1,14 +1,18 @@
-.PHONY: help build rebuild rebuild-server rebuild-envoy rebuild-postgres up down restart restart-server restart-envoy restart-postgres logs logs-server logs-envoy logs-postgres clean
+.PHONY: help build rebuild rebuild-server rebuild-envoy rebuild-postgres up down restart restart-server restart-envoy restart-postgres logs logs-server logs-envoy logs-postgres clean env
+
+# Default environment (can be overridden: make ENV=production build)
+ENV ?= development
 
 # Default target
 help:
 	@echo "Available commands:"
-	@echo "  make build              - Build all services"
-	@echo "  make rebuild            - Rebuild all services (no cache)"
-	@echo "  make rebuild-server     - Rebuild server service (no cache)"
+	@echo "  make env [ENV=development|production]  - Generate .env files from templates"
+	@echo "  make build [ENV=development|production] - Build all services"
+	@echo "  make rebuild [ENV=development|production] - Rebuild all services (no cache)"
+	@echo "  make rebuild-server [ENV=development|production] - Rebuild server service (no cache)"
 	@echo "  make rebuild-envoy      - Rebuild envoy service"
 	@echo "  make rebuild-postgres   - Rebuild postgres service"
-	@echo "  make up                 - Start all services (postgres -> server -> envoy)"
+	@echo "  make up [ENV=development|production] - Start all services (postgres -> server -> envoy)"
 	@echo "  make down               - Stop all services"
 	@echo "  make restart            - Restart all services"
 	@echo "  make restart-server     - Restart server service"
@@ -19,9 +23,18 @@ help:
 	@echo "  make logs-envoy         - Show envoy logs"
 	@echo "  make logs-postgres      - Show postgres logs"
 	@echo "  make clean              - Stop and remove all containers, networks, volumes"
+	@echo ""
+	@echo "Examples:"
+	@echo "  make env ENV=development  - Generate dev environment files"
+	@echo "  make build ENV=production - Build with production config"
+
+# Generate .env files from templates
+env:
+	@echo "Generating .env files for environment: $(ENV)"
+	@./scripts/generate-env.sh $(ENV)
 
 # Build all services
-build:
+build: env
 	@echo "Building postgres..."
 	cd postgres && docker-compose build
 	@echo "Building server..."
@@ -30,7 +43,7 @@ build:
 	cd envoy && docker-compose build
 
 # Rebuild all services (no cache)
-rebuild:
+rebuild: env
 	@echo "Rebuilding postgres..."
 	cd postgres && docker-compose build --no-cache
 	@echo "Rebuilding server (no cache)..."
@@ -39,7 +52,7 @@ rebuild:
 	cd envoy && docker-compose build --no-cache
 
 # Rebuild server only (no cache)
-rebuild-server:
+rebuild-server: env
 	@echo "Rebuilding server (no cache)..."
 	cd server && docker-compose build --no-cache
 	cd server && docker-compose up -d
@@ -57,7 +70,7 @@ rebuild-postgres:
 	cd postgres && docker-compose up -d
 
 # Start all services (order: postgres -> server -> envoy)
-up:
+up: env
 	@echo "Starting postgres..."
 	cd postgres && docker-compose up -d
 	@echo "Waiting for postgres to be ready..."

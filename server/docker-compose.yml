@@ -7,19 +7,22 @@ services:
       dockerfile: server/Dockerfile
     container_name: file-farm-server
     env_file:
-      - ../.env  # Use common .env from project root (relative to server/)
+      - .env  # Use local .env file for this service
+      - ../.env  # Also load root .env as fallback
     environment:
       GRPC_PORT: ${GRPC_PORT:-50051}
       ENVIRONMENT: ${ENVIRONMENT:-production}
       DATABASE_URL: ${DATABASE_URL:-postgres://app:secret@postgres:5432/appdb}
       MONGODB_URI: ${MONGODB_URI:-}
       GRPC_PROTO_FILE: ${GRPC_PROTO_FILE:-protos/service.proto}
+      FILES_DIR: ${FILES_DIR:-/src/uploads}
     ports:
       - "${GRPC_PORT:-50051}:${GRPC_PORT:-50051}"
     networks:
       - appnet
     volumes:
       - ./logs:/src/logs
+      - ./uploads:/src/uploads
     restart: unless-stopped
 
 networks:

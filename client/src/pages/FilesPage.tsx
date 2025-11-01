@@ -52,7 +52,7 @@ export const FilesPage = () => {
     }
   };
 
-    const handleDownload = async () => {
+  const handleDownload = async () => {
     if (!downloadFileName.trim()) {
       setDownloadStatus('Please enter a file name');
       return;
@@ -65,10 +65,21 @@ export const FilesPage = () => {
       const content = await handleDownloadFile(downloadFileName);
       
       if (!content || content.length === 0) {
-        setDownloadStatus('File not found');
+        setDownloadStatus('File not found or empty');
         return;
       }
-      setDownloadStatus(`${content}`);
+
+      // Create blob and trigger download
+      const blob = new Blob([content]);
+      const url = URL.createObjectURL(blob);
+      if (downloadLinkRef.current) {
+        downloadLinkRef.current.href = url;
+        downloadLinkRef.current.download = downloadFileName;
+        downloadLinkRef.current.click();
+        URL.revokeObjectURL(url);
+      }
+      setDownloadStatus(`Success: File ${downloadFileName} downloaded`);
+      setDownloadFileName('');
     } catch (error) {
       setDownloadStatus(`Error: ${error instanceof Error ? error.message : 'Failed to download file'}`);
     } finally {
@@ -134,7 +145,7 @@ export const FilesPage = () => {
             {downloadStatus && (
               <div
                 className={`status-message ${
-                  downloadStatus.startsWith('File') ? 'success' : 'error'
+                  downloadStatus.startsWith('Success') ? 'success' : 'error'
                 }`}
               >
                 {downloadStatus}

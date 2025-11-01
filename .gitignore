@@ -35,3 +35,14 @@ yarn-error.log*
 server/src/generated/
 client/src/generated/
 
+# Uploaded files (keep directory, ignore contents)
+server/uploads/*
+!server/uploads/.gitkeep
+
+# Environment files (keep examples, ignore actual files)
+.env
+server/.env
+postgres/.env
+envoy/.env
+!.env.*.example
+

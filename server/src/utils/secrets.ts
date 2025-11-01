@@ -9,8 +9,10 @@ if (fs.existsSync('.env')) {
 
 export const ENVIRONMENT = process.env.ENVIRONMENT;
 export const MONGODB_URI = process.env.MONGODB_URI;
+export const DATABASE_URL = process.env.DATABASE_URL;
 export const GRPC_PORT = process.env.GRPC_PORT;
 export const GRPC_PROTO_FILE = process.env.GRPC_PROTO_FILE;
+export const FILES_DIR = process.env.FILES_DIR || './uploads';
 
 if (!GRPC_PROTO_FILE) {
     logger.error('GRPC_PROTO_FILE is not set in .env file');
@@ -21,7 +23,7 @@ if (!GRPC_PORT) {
     logger.error('GRPC_PORT is not set in the environment variables');
     process.exit(1);
 }
-if (!MONGODB_URI) {
-    logger.error('No mongo connection string. Set MONGODB_URI environment variable.');
+if (!DATABASE_URL) {
+    logger.error('DATABASE_URL is not set in the environment variables');
     process.exit(1);
 }
