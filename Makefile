@@ -1,12 +1,7 @@
 .PHONY: help env build rebuild up down logs-server logs-postgres logs-envoy logs-client clean
 
-ENV ?= development
-
 help:
 	@echo "File Farm - gRPC File Storage Service"
-	@echo ""
-	@echo "Setup:"
-	@echo "  make env [ENV=development|production]  - Generate .env files"
 	@echo ""
 	@echo "Build & Run:"
 	@echo "  make build            - Build all services"
@@ -24,21 +19,24 @@ help:
 	@echo "  make clean            - Remove all containers and volumes"
 
 env:
-	@./scripts/generate-env.sh $(ENV)
+	cp .env ./postgres/.env
+	cp .env ./server/.env
+	cp .env ./envoy/.env
+	cp .env ./client/.env
 
-build: env
+build:
 	@cd postgres && docker-compose build
 	@cd server && docker-compose build
 	@cd envoy && docker-compose build
 	@cd client && docker-compose build
 
-rebuild: env
+rebuild:
 	@cd postgres && docker-compose build --no-cache
 	@cd server && docker-compose build --no-cache
 	@cd envoy && docker-compose build --no-cache
 	@cd client && docker-compose build --no-cache
 
-up: env
+up:
 	@cd postgres && docker-compose up -d
 	@sleep 3
 	@cd server && docker-compose up -d
