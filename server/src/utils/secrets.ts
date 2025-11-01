@@ -12,7 +12,7 @@ export const MONGODB_URI = process.env.MONGODB_URI;
 export const DATABASE_URL = process.env.DATABASE_URL;
 export const GRPC_PORT = process.env.GRPC_PORT;
 export const GRPC_PROTO_FILE = process.env.GRPC_PROTO_FILE;
-export const FILES_DIR = process.env.FILES_DIR || './uploads';
+export const FILES_DIR = process.env.FILES_DIR || '/src/uploads';
 
 if (!GRPC_PROTO_FILE) {
     logger.error('GRPC_PROTO_FILE is not set in .env file');

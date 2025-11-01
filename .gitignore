@@ -36,13 +36,15 @@ server/src/generated/
 client/src/generated/
 
 # Uploaded files (keep directory, ignore contents)
-server/uploads/*
-!server/uploads/.gitkeep
+uploads/*
+!uploads/.gitkeep
+server/uploads/
 
 # Environment files (keep examples, ignore actual files)
 .env
 server/.env
 postgres/.env
 envoy/.env
+client/.env
 !.env.*.example
 

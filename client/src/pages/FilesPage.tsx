@@ -70,7 +70,9 @@ export const FilesPage = () => {
       }
 
       // Create blob and trigger download
-      const blob = new Blob([content]);
+      // Convert Uint8Array to ArrayBuffer for Blob compatibility
+      const arrayBuffer = content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength) as ArrayBuffer;
+      const blob = new Blob([arrayBuffer]);
       const url = URL.createObjectURL(blob);
       if (downloadLinkRef.current) {
         downloadLinkRef.current.href = url;

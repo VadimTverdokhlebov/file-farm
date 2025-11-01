@@ -64,5 +64,5 @@ static_resources:
               - endpoint:
                   address:
                     socket_address:
-                      address: app  # Use service name from docker-compose if in same network
-                      port_value: 50051  # Change to your GRPC_PORT value
+                      address: app
+                      port_value: 50051

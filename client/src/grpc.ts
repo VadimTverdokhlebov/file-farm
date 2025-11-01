@@ -2,7 +2,7 @@ import { GrpcWebFetchTransport } from '@protobuf-ts/grpcweb-transport';
 import { FileServiceClient } from './generated/file.client';
 import { UserServiceClient } from './generated/user.client';
 
-const apiUrl = 'http://localhost:8080';
+const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
 const transport = new GrpcWebFetchTransport({
   baseUrl: apiUrl,

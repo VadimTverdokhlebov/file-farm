@@ -1,12 +1,20 @@
 version: "3.8"
+
 services:
   envoy:
     image: envoyproxy/envoy:v1.33-latest
     container_name: file-farm-envoy
+    env_file:
+      - .env
+      - ../.env
+    environment:
+      ENVOY_PORT: ${ENVOY_PORT:-8080}
+      ENVOY_BACKEND_HOST: ${ENVOY_BACKEND_HOST:-app}
+      ENVOY_BACKEND_PORT: ${ENVOY_BACKEND_PORT:-50051}
     ports:
-      - '8080:8080'
+      - "${ENVOY_PORT:-8080}:${ENVOY_PORT:-8080}"
     volumes:
-      - ./envoy.yaml:/etc/envoy/envoy.yaml
+      - ./envoy.yaml:/etc/envoy/envoy.yaml:ro
     networks:
       - appnet
     restart: unless-stopped

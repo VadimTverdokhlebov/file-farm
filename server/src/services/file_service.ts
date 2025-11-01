@@ -20,6 +20,12 @@ async function ensureUploadsDir(): Promise<void> {
     }
 }
 
+// Get absolute path for file storage
+function getFilePath(filename: string): string {
+    const isAbsolute = path.isAbsolute(FILES_DIR);
+    return isAbsolute ? path.join(FILES_DIR, filename) : path.resolve(FILES_DIR, filename);
+}
+
 export async function UploadFile(
     call: ServerUnaryCall<UploadFileRequest__Output, UploadFileResponse>,
     callback: sendUnaryData<UploadFileResponse>
@@ -46,7 +52,7 @@ export async function UploadFile(
         const fileExtension = path.extname(originalFilename);
         const baseName = path.basename(originalFilename, fileExtension);
         const uniqueFilename = `${baseName}_${uuidv4()}${fileExtension}`;
-        const filePath = path.join(FILES_DIR, uniqueFilename);
+        const filePath = getFilePath(uniqueFilename);
 
         logger.info('==============================================');
         logger.info('Uploading file:', originalFilename);

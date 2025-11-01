@@ -22,7 +22,7 @@ services:
       - appnet
     volumes:
       - ./logs:/src/logs
-      - ./uploads:/src/uploads
+      - ../uploads:/src/uploads
     restart: unless-stopped
 
 networks:
