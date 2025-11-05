@@ -3,7 +3,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import logger from '../utils/logger';
-import { FILES_DIR } from '../utils/secrets';
+import { config } from '../utils/secrets';
 import { UploadFileRequest__Output } from '../generated/filefarm/file/UploadFileRequest';
 import { UploadFileResponse } from '../generated/filefarm/file/UploadFileResponse';
 import { DownloadFileRequest__Output } from '../generated/filefarm/file/DownloadFileRequest';
@@ -13,17 +13,17 @@ import { fileRepository } from '../persistance/query/FileRepository';
 // Ensure uploads directory exists
 async function ensureUploadsDir(): Promise<void> {
     try {
-        await fs.access(FILES_DIR);
+        await fs.access(config.files.dir);
     } catch {
-        await fs.mkdir(FILES_DIR, { recursive: true });
-        logger.info(`Created uploads directory: ${FILES_DIR}`);
+        await fs.mkdir(config.files.dir, { recursive: true });
+        logger.info(`Created uploads directory: ${config.files.dir}`);
     }
 }
 
 // Get absolute path for file storage
 function getFilePath(filename: string): string {
-    const isAbsolute = path.isAbsolute(FILES_DIR);
-    return isAbsolute ? path.join(FILES_DIR, filename) : path.resolve(FILES_DIR, filename);
+    const isAbsolute = path.isAbsolute(config.files.dir);
+    return isAbsolute ? path.join(config.files.dir, filename) : path.resolve(config.files.dir, filename);
 }
 
 export async function UploadFile(
@@ -65,7 +65,7 @@ export async function UploadFile(
 
         // Save file to filesystem
         // fs.promises.writeFile accepts Buffer or Uint8Array
-        await fs.writeFile(filePath, request.content as Buffer);
+        await fs.writeFile(filePath, request.content as Uint8Array);
         logger.info(`File saved to filesystem: ${filePath}`);
 
         // Save file metadata to database

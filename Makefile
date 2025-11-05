@@ -18,15 +18,13 @@ help:
 	@echo "Maintenance:"
 	@echo "  make clean            - Remove all containers and volumes"
 
-init:
+init-development:
 	@echo ""
 	@echo "Initializing environment..."
 	@echo ""
-	@cp .env.example .env
-	cp .env ./postgres/.env
-	cp .env ./envoy/.env
-	cp .env ./client/.env
-	cp .env ./server/.env
+	cp ./postgres/.env.development.example ./postgres/.env
+	cp ./client/.env.development.example ./client/.env
+	cp ./server/.env.development.example ./server/.env
 	@echo ""
 	@echo "Initializing server..."
 	@echo ""
@@ -35,6 +33,16 @@ init:
 	@echo "Initializing client..."
 	@echo ""
 	@cd client && npm ci
+	@echo ""
+	@echo "Initialization complete!"
+
+init-production:
+	@echo ""
+	@echo "Initializing environment..."
+	@echo ""
+	cp ./postgres/.env.production.example ./postgres/.env
+	cp ./client/.env.production.example ./client/.env
+	cp ./server/.env.production.example ./server/.env
 	@echo ""
 	@echo "Initialization complete!"
 

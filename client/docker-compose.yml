@@ -8,8 +8,6 @@ services:
       args:
         VITE_API_URL: ${VITE_API_URL}
     container_name: file-farm-client
-    env_file:
-      - .env
     ports:
       - "${CLIENT_PORT}:${CLIENT_PORT}"
     networks:

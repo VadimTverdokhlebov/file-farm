@@ -6,12 +6,9 @@ services:
       context: ..
       dockerfile: server/Dockerfile
     container_name: file-farm-server
-    env_file:
-      - .env
     environment:
       GRPC_PORT: ${GRPC_PORT}
       ENVIRONMENT: ${ENVIRONMENT}
-      DATABASE_URL: ${DATABASE_URL}
       GRPC_PROTO_FILE: ${GRPC_PROTO_FILE}
       FILES_DIR: ${FILES_DIR}
     ports:
@@ -21,6 +18,7 @@ services:
     volumes:
       - ./logs:/src/logs
       - ../uploads:/src/uploads
+      - ../protos:/src/protos 
     restart: unless-stopped
 
 networks:
