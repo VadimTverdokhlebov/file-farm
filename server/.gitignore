@@ -1,6 +1,4 @@
 node_modules/
 build/
 logs/
-.DS_Store
 .env
-.env.prod

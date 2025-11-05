@@ -1,24 +1,32 @@
-FROM node:16.13.0
+FROM node:20-alpine AS build
 
 WORKDIR /src
 
-# Copy proto files from project root
 COPY protos ./protos
 
-# Copy server package files
-COPY server/package.json ./
+COPY server/package*.json ./
 
-# Install dependencies
-RUN npm install
+RUN npm ci --only=production=false
 
-# Copy server source files
 COPY server/ .
 
-# Build TypeScript (will copy protos to build/protos)
 RUN npm run build
 
-# Expose gRPC port
+FROM node:20-alpine AS production
+
+WORKDIR /src
+
+COPY protos ./protos
+
+COPY server/package*.json ./
+
+RUN npm ci --only=production && npm cache clean --force
+
+COPY --from=build /src/build ./build
+COPY --from=build /src/protos ./protos
+
+RUN mkdir -p logs
+
 EXPOSE 50051
 
-# Run server
 CMD ["npm", "start"]

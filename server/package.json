@@ -1,7 +1,8 @@
 {
-  "name": "server",
+  "name": "file-farm-server",
   "version": "1.0.0",
-  "description": "",
+  "author": "Vadim Tverdokhlebov",
+  "license": "ISC",
   "scripts": {
     "dev": "nodemon",
     "start": "node build/server.js",
@@ -9,21 +10,19 @@
     "build": "rimraf ./build && tsc -p . && (cp -r ../protos build/protos 2>/dev/null || cp -r ./protos build/protos 2>/dev/null || true)",
     "debug": "GRPC_VERBOSITY=DEBUG GRPC_TRACE=all nodemon"
   },
-  "author": "Vadim Tverdokhlebov",
-  "license": "ISC",
   "devDependencies": {
     "@types/node": "^17.0.30",
     "@types/pg": "^8.10.9",
     "@types/uuid": "^9.0.7",
+    "nodemon": "^3.1.10",
     "rimraf": "^3.0.2",
     "ts-node": "^10.7.0",
     "typescript": "^4.6.4"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.6.7",
-    "@types/google-protobuf": "^3.15.6",
+    "@grpc/proto-loader": "^0.8.0",
     "dotenv": "^16.0.0",
-    "nodemon": "^3.1.10",
     "winston": "^3.7.2",
     "typeorm": "^0.3.17",
     "pg": "^8.11.3",

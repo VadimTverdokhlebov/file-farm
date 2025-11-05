@@ -12,14 +12,18 @@ services:
       GRPC_PROTO_FILE: ${GRPC_PROTO_FILE}
       FILES_SAVE_DIR: ${FILES_SAVE_DIR}
       POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
       - "${GRPC_PORT}:${GRPC_PORT}"
-    networks:
-      - appnet
     volumes:
       - ./logs:/src/logs
       - ../uploads:/src/uploads
       - ../protos:/src/protos
+    networks:
+      - appnet
     restart: unless-stopped
 
 networks:

@@ -1,18 +1,14 @@
 ## Install Environment Development Mode
 
 ```bash
-make init-development
+make env-dev
+```
+
+```bash
+make init
 ```
 
 ### Start Services
-
-```bash
-make build-postgres
-```
-
-```bash
-make build-envoy
-```
 
 ```bash
 make up-postgres
@@ -20,28 +16,6 @@ make up-postgres
 
 ```bash
 make up-envoy
-```
-
-## Install Environment Production Mode
-
-```bash
-make init-production
-```
-
-### Start Services
-
-```bash
-make build
-```
-
-```bash
-make up
-```
-
-### Stop Services
-
-```bash
-make down
 ```
 
 ### Start Clint and Server
@@ -62,4 +36,25 @@ cd server && npm run gen:proto
 
 ```bash
 cd client && npm run gen:proto
+```
+## Install Environment Production Mode
+
+```bash
+make env-prod
+```
+
+### Start Services
+
+```bash
+make build
+```
+
+```bash
+make up
+```
+
+### Stop Services
+
+```bash
+make down
 ```

@@ -1,30 +1,40 @@
-.PHONY: help env build rebuild up down logs-server logs-postgres logs-envoy logs-client clean
-
 help:
-	@echo "File Farm - gRPC File Storage Service"
 	@echo ""
-	@echo "Build & Run:"
+	@echo "Setup:"
+	@echo "  make init             - Install npm dependencies for server and client"
+	@echo "  make env-dev          - Copy development .env files from examples"
+	@echo "  make env-prod         - Copy production .env files from examples"
+	@echo ""
+	@echo "Build:"
 	@echo "  make build            - Build all services"
+	@echo "  make build-server     - Build server only"
+	@echo "  make build-client     - Build client only"
+	@echo "  make build-envoy      - Build envoy only"
+	@echo "  make build-postgres   - Build postgres only"
 	@echo "  make rebuild          - Rebuild all services (no cache)"
+	@echo ""
+	@echo "Run:"
 	@echo "  make up               - Start all services"
+	@echo "  make up-server        - Start server only"
+	@echo "  make up-client        - Start client only"
+	@echo "  make up-envoy         - Start envoy only"
+	@echo "  make up-postgres      - Start postgres only"
 	@echo "  make down             - Stop all services"
+	@echo "  make down-server      - Stop server only"
+	@echo "  make down-client      - Stop client only"
+	@echo "  make down-envoy       - Stop envoy only"
+	@echo "  make down-postgres    - Stop postgres only"
 	@echo ""
 	@echo "Logs:"
-	@echo "  make logs-server      - Server logs"
-	@echo "  make logs-postgres    - Database logs"
-	@echo "  make logs-envoy       - Envoy logs"
-	@echo "  make logs-client      - Client logs"
+	@echo "  make logs-server      - View server logs"
+	@echo "  make logs-postgres    - View database logs"
+	@echo "  make logs-envoy       - View envoy logs"
+	@echo "  make logs-client      - View client logs"
 	@echo ""
 	@echo "Maintenance:"
-	@echo "  make clean            - Remove all containers and volumes"
+	@echo "  make clean            - Remove all containers, volumes and networks"
 
-init-development:
-	@echo ""
-	@echo "Initializing environment..."
-	@echo ""
-	cp ./postgres/.env.development.example ./postgres/.env
-	cp ./client/.env.development.example ./client/.env
-	cp ./server/.env.development.example ./server/.env
+init:
 	@echo ""
 	@echo "Initializing server..."
 	@echo ""
@@ -35,8 +45,19 @@ init-development:
 	@cd client && npm ci
 	@echo ""
 	@echo "Initialization complete!"
+	@echo ""
+	
+env-dev:
+	@echo ""
+	@echo "Initializing environment..."
+	@echo ""
+	cp ./postgres/.env.development.example ./postgres/.env
+	cp ./client/.env.development.example ./client/.env
+	cp ./server/.env.development.example ./server/.env
+	@echo ""
+	@echo "Initialization complete!"
 
-init-production:
+env-prod:
 	@echo ""
 	@echo "Initializing environment..."
 	@echo ""
@@ -57,7 +78,7 @@ up-envoy:
 
 up-postgres:
 	@cd postgres && docker-compose up -d
-	@sleep 2
+	@sleep 1
 
 up:
 	@make up-postgres
