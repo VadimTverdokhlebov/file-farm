@@ -11,6 +11,7 @@ services:
       ENVIRONMENT: ${ENVIRONMENT}
       GRPC_PROTO_FILE: ${GRPC_PROTO_FILE}
       FILES_SAVE_DIR: ${FILES_SAVE_DIR}
+      POSTGRES_HOST: ${POSTGRES_HOST}
     ports:
       - "${GRPC_PORT}:${GRPC_PORT}"
     networks:
