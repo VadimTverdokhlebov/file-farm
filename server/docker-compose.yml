@@ -10,7 +10,7 @@ services:
       GRPC_PORT: ${GRPC_PORT}
       ENVIRONMENT: ${ENVIRONMENT}
       GRPC_PROTO_FILE: ${GRPC_PROTO_FILE}
-      FILES_DIR: ${FILES_DIR}
+      FILES_SAVE_DIR: ${FILES_SAVE_DIR}
     ports:
       - "${GRPC_PORT}:${GRPC_PORT}"
     networks:
@@ -18,7 +18,7 @@ services:
     volumes:
       - ./logs:/src/logs
       - ../uploads:/src/uploads
-      - ../protos:/src/protos 
+      - ../protos:/src/protos
     restart: unless-stopped
 
 networks:
