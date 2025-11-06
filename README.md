@@ -18,7 +18,7 @@ make up-postgres
 make up-envoy
 ```
 
-### Start Clint and Server
+### Start Client and Server
 
 ```bash
 cd server && npm run dev
