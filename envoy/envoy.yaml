@@ -2,6 +2,15 @@ admin:
   access_log_path: /tmp/admin_access.log
   address:
     socket_address: { address: 0.0.0.0, port_value: 9901 }
+  profile_path: /tmp/envoy.prof
+
+stats_config:
+  stats_matcher:
+    inclusion_list:
+      patterns:
+        - safe_regex:
+            regex: ".*"
+  use_all_default_tags: true
 
 static_resources:
   listeners:
@@ -34,6 +43,29 @@ static_resources:
                         allow_headers: keep-alive,user-agent,cache-control,content-type,content-transfer-encoding,x-accept-content-transfer-encoding,x-accept-response-streaming,x-user-agent,x-grpc-web,grpc-timeout
                         max_age: '1728000'
                         expose_headers: grpc-status,grpc-message
+                access_log:
+                  - name: envoy.access_loggers.stdout
+                    typed_config:
+                      '@type': type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                      log_format:
+                        json_format:
+                          start_time: "%START_TIME%"
+                          method: "%REQ(:METHOD)%"
+                          path: "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%"
+                          protocol: "%PROTOCOL%"
+                          response_code: "%RESPONSE_CODE%"
+                          response_flags: "%RESPONSE_FLAGS%"
+                          bytes_received: "%BYTES_RECEIVED%"
+                          bytes_sent: "%BYTES_SENT%"
+                          duration: "%DURATION%"
+                          upstream_service_time: "%RESP(X-ENVOY-UPSTREAM-SERVICE-TIME)%"
+                          x_forwarded_for: "%REQ(X-FORWARDED-FOR)%"
+                          user_agent: "%REQ(USER-AGENT)%"
+                          request_id: "%REQ(X-REQUEST-ID)%"
+                          authority: "%REQ(:AUTHORITY)%"
+                          upstream_host: "%UPSTREAM_HOST%"
+                          grpc_status: "%RESP(GRPC-STATUS)%"
+                          grpc_message: "%RESP(GRPC-MESSAGE)%"
                 http_filters:
                   - name: envoy.filters.http.grpc_web
                     typed_config:

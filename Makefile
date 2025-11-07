@@ -19,17 +19,20 @@ help:
 	@echo "  make up-client        - Start client only"
 	@echo "  make up-envoy         - Start envoy only"
 	@echo "  make up-postgres      - Start postgres only"
+	@echo "  make up-prometheus    - Start prometheus only"
 	@echo "  make down             - Stop all services"
 	@echo "  make down-server      - Stop server only"
 	@echo "  make down-client      - Stop client only"
 	@echo "  make down-envoy       - Stop envoy only"
 	@echo "  make down-postgres    - Stop postgres only"
+	@echo "  make down-prometheus  - Stop prometheus only"
 	@echo ""
 	@echo "Logs:"
 	@echo "  make logs-server      - View server logs"
 	@echo "  make logs-postgres    - View database logs"
 	@echo "  make logs-envoy       - View envoy logs"
 	@echo "  make logs-client      - View client logs"
+	@echo "  make logs-prometheus  - View prometheus logs"
 	@echo ""
 	@echo "Maintenance:"
 	@echo "  make clean            - Remove all containers, volumes and networks"
@@ -80,11 +83,15 @@ up-postgres:
 	@cd postgres && docker-compose up -d
 	@sleep 1
 
+up-prometheus:
+	@cd prometheus && docker-compose up -d
+
 up:
 	@make up-postgres
 	@make up-server
 	@make up-envoy
 	@make up-client
+	@make up-prometheus
 
 build-server:
 	@cd server && docker-compose build
@@ -122,11 +129,15 @@ down-envoy:
 down-postgres:
 	@cd postgres && docker-compose down
 
+down-prometheus:
+	@cd prometheus && docker-compose down
+
 down:
 	@make down-server
 	@make down-client
 	@make down-envoy
 	@make down-postgres
+	@make down-prometheus
 
 logs-server:
 	@cd server && docker-compose logs -f
@@ -140,9 +151,13 @@ logs-envoy:
 logs-client:
 	@cd client && docker-compose logs -f
 
+logs-prometheus:
+	@cd prometheus && docker-compose logs -f
+
 clean:
 	@cd server && docker-compose down -v
 	@cd client && docker-compose down -v
 	@cd envoy && docker-compose down -v
 	@cd postgres && docker-compose down -v
+	@cd prometheus && docker-compose down -v
 	@-docker network rm appnet 2>/dev/null || true

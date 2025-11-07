@@ -1,0 +1,22 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'file-farm-monitor'
+
+scrape_configs:
+  - job_name: 'envoy'
+    metrics_path: '/stats/prometheus'
+    static_configs:
+      - targets: ['172.20.0.6:9901']
+        labels:
+          service: 'envoy-proxy'
+          instance: 'file-farm-envoy'
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          service: 'prometheus'
+          instance: 'file-farm-prometheus'
+
