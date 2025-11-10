@@ -1,0 +1,18 @@
+# docker-compose.yml
+services:
+  load-stand-backend:
+    build: ./load-stand
+    ports:
+      - "8081:8081" # Пробрасываем порт, который указан в HTTP_PORT
+    # Используем environment для передачи конфигурации в контейнер
+    environment:
+      # Порт, который будет слушать Go-сервер ВНУТРИ контейнера
+      - HTTP_PORT=8081 
+      # Цель для gRPC-запросов - сервис envoy в сети docker
+      - TARGET_GRPC=envoy:8080 
+      # Путь к proto файлам ВНУТРИ контейнера (как указано в Dockerfile)
+      - PROTO_DIR=../proto
+networks:
+  appnet:
+    external: true
+    name: appnet

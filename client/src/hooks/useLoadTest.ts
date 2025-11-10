@@ -1,14 +1,20 @@
 // src/hooks/useLoadTest.ts
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { TestStats, TestStatus, TestConfig } from '../types/loadTest';
 
-// Определяем тип возвращаемого значения хука для удобства
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { TestStatus, TestConfig } from '../types/loadTest';
+
 interface UseLoadTestReturn {
   endpoints: string[];
   status: TestStatus;
-  startTest: (config: TestConfig) => Promise<void>;
-  stopTest: () => Promise<void>;
+  startTest: (config: TestConfig) => void; // Больше не async
+  stopTest: () => void; // Больше не async
   error: string | null;
+}
+
+// Определяем тип для входящих сообщений с сервера
+interface WebSocketMessage {
+  type: 'status' | 'error';
+  payload: any;
 }
 
 export const useLoadTest = (): UseLoadTestReturn => {
@@ -21,12 +27,12 @@ export const useLoadTest = (): UseLoadTestReturn => {
 
   const ws = useRef<WebSocket | null>(null);
 
-  // Получаем список эндпоинтов
   useEffect(() => {
+    // Получение эндпоинтов остается по HTTP, т.к. это разовая операция при загрузке
     const fetchEndpoints = async () => {
       try {
         const response = await fetch('/api/endpoints');
-        if (!response.ok) throw new Error('Failed to fetch endpoints');
+        if (!response.ok) throw new Error('Failed to fetch endpoints from server.');
         const data: string[] = await response.json();
         setEndpoints(data || []);
       } catch (err: any) {
@@ -34,10 +40,8 @@ export const useLoadTest = (): UseLoadTestReturn => {
       }
     };
     fetchEndpoints();
-  }, []);
 
-  // Управляем WebSocket соединением
-  useEffect(() => {
+    // Настраиваем WebSocket
     const wsUrl = `ws://${window.location.host}/ws`;
     ws.current = new WebSocket(wsUrl);
     ws.current.onopen = () => console.log('WebSocket connected');
@@ -45,8 +49,21 @@ export const useLoadTest = (): UseLoadTestReturn => {
 
     ws.current.onmessage = (event) => {
       try {
-        const data: TestStatus = JSON.parse(event.data);
-        setStatus(data);
+        const message: WebSocketMessage = JSON.parse(event.data);
+
+        // Обрабатываем сообщения в зависимости от их типа
+        if (message.type === 'status') {
+          const newStatus: TestStatus = {
+            isRunning: message.payload.isRunning,
+            stats: {
+              successfulRequests: Number(message.payload.stats.successfulRequests) || 0,
+              failedRequests: Number(message.payload.stats.failedRequests) || 0,
+            },
+          };
+          setStatus(newStatus);
+        } else if (message.type === 'error') {
+          setError(message.payload.message);
+        }
       } catch (e) {
         console.error('Failed to parse WebSocket message:', e);
       }
@@ -58,29 +75,29 @@ export const useLoadTest = (): UseLoadTestReturn => {
     };
   }, []);
 
-  const startTest = useCallback(async (config: TestConfig) => {
-    setError(null);
-    try {
-      const response = await fetch('/api/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
-      });
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.message || 'Failed to start test');
-      }
-    } catch (err: any) {
-      setError(err.message);
+  // Отправляем команду "start" через WebSocket
+  const startTest = useCallback((config: TestConfig) => {
+    if (ws.current?.readyState === WebSocket.OPEN) {
+      setError(null);
+      ws.current.send(JSON.stringify({
+        action: 'start',
+        payload: config,
+      }));
+    } else {
+      setError('WebSocket is not connected.');
     }
   }, []);
 
-  const stopTest = useCallback(async () => {
-    setError(null);
-    try {
-      await fetch('/api/stop', { method: 'POST' });
-    } catch (err: any) {
-      setError(err.message);
+  // Отправляем команду "stop" через WebSocket
+  const stopTest = useCallback(() => {
+    if (ws.current?.readyState === WebSocket.OPEN) {
+      setError(null);
+      ws.current.send(JSON.stringify({
+        action: 'stop',
+        payload: {}, // payload не нужен, но для консистентности отправляем пустой объект
+      }));
+    } else {
+      setError('WebSocket is not connected.');
     }
   }, []);
 
