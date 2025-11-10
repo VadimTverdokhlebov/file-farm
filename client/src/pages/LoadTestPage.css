@@ -1,0 +1,91 @@
+.dashboard {
+    font-family: sans-serif;
+    padding: 20px;
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+.form-container, .status-container {
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.form-group, .endpoints-group {
+    margin-bottom: 15px;
+}
+
+label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+}
+
+input[type="number"] {
+    padding: 8px;
+    width: 100px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+
+.endpoints-list {
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid #eee;
+    padding: 10px;
+}
+
+.endpoint-item {
+    display: flex;
+    align-items: center;
+}
+.endpoint-item input {
+    margin-right: 10px;
+}
+.endpoint-item label {
+    font-weight: normal;
+}
+
+.controls button {
+    padding: 10px 20px;
+    font-size: 16px;
+    margin-right: 10px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.controls button:first-of-type {
+    background-color: #28a745;
+    color: white;
+}
+
+.controls button:last-of-type {
+    background-color: #dc3545;
+    color: white;
+}
+
+.status-container h2 {
+    margin-top: 0;
+}
+
+.stats p {
+    font-size: 18px;
+}
+.stats span {
+    font-weight: bold;
+    padding: 5px 10px;
+    border-radius: 4px;
+    background-color: #f0f0f0;
+}
+
+.error {
+    color: red;
+    font-weight: bold;
+}
