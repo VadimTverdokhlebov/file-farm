@@ -1,4 +1,3 @@
-// src/types/loadTest.ts
 export interface TestStats {
   successfulRequests: number;
   failedRequests: number;
@@ -11,6 +10,6 @@ export interface TestStatus {
 
 export interface TestConfig {
   concurrency: number;
-  duration: number; // в секундах
+  duration: number;
   endpoints: string[];
 }

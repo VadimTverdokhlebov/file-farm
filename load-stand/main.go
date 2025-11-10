@@ -15,7 +15,7 @@ func main() {
 
 	loadEngine, err := engine.NewEngine(cfg.GrpcTarget, cfg.ProtoDir)
 	if err != nil {
-		log.Fatalf("Error start load engine engine: %v", err)
+		log.Fatalf("Failed to start load engine: %v", err)
 	}
 
 	apiHandler := api.NewHandler(loadEngine)
@@ -27,6 +27,6 @@ func main() {
 	listenAddr := fmt.Sprintf(":%d", cfg.HttpPort)
 	log.Printf("Load stand server listening at http://localhost%s", listenAddr)
 	if err := http.ListenAndServe(listenAddr, mux); err != nil {
-		log.Fatalf("Error start server: %v", err)
+		log.Fatalf("Failed to start server: %v", err)
 	}
 }
