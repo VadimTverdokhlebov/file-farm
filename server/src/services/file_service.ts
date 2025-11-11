@@ -45,7 +45,7 @@ export async function UploadFile(
         const mimetype = request.mimetype || 'application/octet-stream';
 
         // Decode base64 content to Buffer
-        const base64Content = request.content as unknown as string;
+        const base64Content = request.content;
         const fileBuffer = Buffer.from(base64Content, 'base64');
         const fileSize = fileBuffer.length;
 
@@ -57,15 +57,6 @@ export async function UploadFile(
         const baseName = path.basename(originalFilename, fileExtension);
         const uniqueFilename = `${baseName}_${uuidv4()}${fileExtension}`;
         const filePath = getFilePath(uniqueFilename);
-
-        logger.info('==============================================');
-        logger.info('Uploading file:', originalFilename);
-        logger.info('File type:', mimetype);
-        logger.info('File Size (bytes):', fileSize);
-        logger.info('File size (KB):', (fileSize / 1024).toFixed(2));
-        logger.info('File size (MB):', (fileSize / (1024 * 1024)).toFixed(2));
-        logger.info('Storing as:', uniqueFilename);
-        logger.info('==============================================');
 
         // Save file to filesystem
         await fs.writeFile(filePath, fileBuffer as Uint8Array);

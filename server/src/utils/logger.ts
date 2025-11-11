@@ -26,6 +26,7 @@ const level = () => {
 winston.addColors(colors);
 
 const winstonFormat = winston.format.combine(
+    winston.format.splat(),
     winston.format.colorize({
         all: true
     }),
@@ -36,7 +37,8 @@ const winstonFormat = winston.format.combine(
     winston.format.align(),
     winston.format.printf(
         (info) => `[${info.timestamp}] ${info.level}: ${info.message}`,
-    )
+    ),
+    winston.format.errors({ stack: true })
 )
 
 const logger =  winston.createLogger({

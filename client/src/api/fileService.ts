@@ -18,13 +18,21 @@ export const handleDownloadFile = async (filename: string): Promise<Uint8Array> 
 
 export const handleUploadFile = async (filename: string, content: Uint8Array, mimetype: string) => {
   // Encode Uint8Array to base64
+  // Convert Uint8Array to binary string in chunks to avoid stack overflow
   let binaryString = '';
   const chunkSize = 8192;
   for (let i = 0; i < content.length; i += chunkSize) {
     const chunk = content.slice(i, i + chunkSize);
-    binaryString += String.fromCharCode(...chunk);
+    for (let j = 0; j < chunk.length; j++) {
+      binaryString += String.fromCharCode(chunk[j]);
+    }
   }
   const base64Content = btoa(binaryString);
+  console.log({ 
+    filename, 
+    content: base64Content, 
+    mimetype 
+  });
   
   const response = await fileClient.uploadFile({ 
     filename, 
