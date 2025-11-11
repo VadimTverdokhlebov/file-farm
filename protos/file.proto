@@ -9,7 +9,7 @@ service FileService {
 
 message UploadFileRequest {
     string filename = 1;
-    bytes content = 2;
+    string content = 2;
     string mimetype = 3;
 }
 
@@ -24,7 +24,7 @@ message DownloadFileRequest {
 }
 
 message DownloadFileResponse {
-    bytes content = 1;
+    string content = 1;
     string mimetype = 2;
 }
 

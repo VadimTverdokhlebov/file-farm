@@ -41,9 +41,13 @@ export async function UploadFile(
             throw new Error('Filename is required');
         }
 
-        const fileSize = request.content.length;
         const originalFilename = request.filename;
         const mimetype = request.mimetype || 'application/octet-stream';
+
+        // Decode base64 content to Buffer
+        const base64Content = request.content as unknown as string;
+        const fileBuffer = Buffer.from(base64Content, 'base64');
+        const fileSize = fileBuffer.length;
 
         // Ensure uploads directory exists
         await ensureUploadsDir();
@@ -64,8 +68,7 @@ export async function UploadFile(
         logger.info('==============================================');
 
         // Save file to filesystem
-        // fs.promises.writeFile accepts Buffer or Uint8Array
-        await fs.writeFile(filePath, request.content as Uint8Array);
+        await fs.writeFile(filePath, fileBuffer as Uint8Array);
         logger.info(`File saved to filesystem: ${filePath}`);
 
         // Save file metadata to database
@@ -131,8 +134,11 @@ export async function DownloadFile(
         logger.info(`File ${file.originalFilename} found, size: ${file.size} bytes`);
         logger.info(`Reading from: ${file.filePath}`);
 
+        // Encode file content to base64
+        const base64Content = fileContent.toString('base64');
+
         const response: DownloadFileResponse = {
-            content: new Uint8Array(fileContent.buffer, fileContent.byteOffset, fileContent.length),
+            content: base64Content,
             mimetype: file.mimetype
         };
 
@@ -143,7 +149,7 @@ export async function DownloadFile(
         
         // Return empty response on error
         const response: DownloadFileResponse = {
-            content: new Uint8Array(0),
+            content: '',
             mimetype: 'application/octet-stream'
         };
 

@@ -2,11 +2,11 @@
 
 
 export interface DownloadFileResponse {
-  'content'?: (Buffer | Uint8Array | string);
+  'content'?: (string);
   'mimetype'?: (string);
 }
 
 export interface DownloadFileResponse__Output {
-  'content'?: (Buffer);
+  'content'?: (string);
   'mimetype'?: (string);
 }

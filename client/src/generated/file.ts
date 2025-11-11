@@ -20,9 +20,9 @@ export interface UploadFileRequest {
      */
     filename: string;
     /**
-     * @generated from protobuf field: bytes content = 2
+     * @generated from protobuf field: string content = 2
      */
-    content: Uint8Array;
+    content: string;
     /**
      * @generated from protobuf field: string mimetype = 3
      */
@@ -59,9 +59,9 @@ export interface DownloadFileRequest {
  */
 export interface DownloadFileResponse {
     /**
-     * @generated from protobuf field: bytes content = 1
+     * @generated from protobuf field: string content = 1
      */
-    content: Uint8Array;
+    content: string;
     /**
      * @generated from protobuf field: string mimetype = 2
      */
@@ -72,14 +72,14 @@ class UploadFileRequest$Type extends MessageType<UploadFileRequest> {
     constructor() {
         super("filefarm.file.UploadFileRequest", [
             { no: 1, name: "filename", kind: "scalar", T: 9 /*ScalarType.STRING*/ },
-            { no: 2, name: "content", kind: "scalar", T: 12 /*ScalarType.BYTES*/ },
+            { no: 2, name: "content", kind: "scalar", T: 9 /*ScalarType.STRING*/ },
             { no: 3, name: "mimetype", kind: "scalar", T: 9 /*ScalarType.STRING*/ }
         ]);
     }
     create(value?: PartialMessage<UploadFileRequest>): UploadFileRequest {
         const message = globalThis.Object.create((this.messagePrototype!));
         message.filename = "";
-        message.content = new Uint8Array(0);
+        message.content = "";
         message.mimetype = "";
         if (value !== undefined)
             reflectionMergePartial<UploadFileRequest>(this, message, value);
@@ -93,8 +93,8 @@ class UploadFileRequest$Type extends MessageType<UploadFileRequest> {
                 case /* string filename */ 1:
                     message.filename = reader.string();
                     break;
-                case /* bytes content */ 2:
-                    message.content = reader.bytes();
+                case /* string content */ 2:
+                    message.content = reader.string();
                     break;
                 case /* string mimetype */ 3:
                     message.mimetype = reader.string();
@@ -114,9 +114,9 @@ class UploadFileRequest$Type extends MessageType<UploadFileRequest> {
         /* string filename = 1; */
         if (message.filename !== "")
             writer.tag(1, WireType.LengthDelimited).string(message.filename);
-        /* bytes content = 2; */
-        if (message.content.length)
-            writer.tag(2, WireType.LengthDelimited).bytes(message.content);
+        /* string content = 2; */
+        if (message.content !== "")
+            writer.tag(2, WireType.LengthDelimited).string(message.content);
         /* string mimetype = 3; */
         if (message.mimetype !== "")
             writer.tag(3, WireType.LengthDelimited).string(message.mimetype);
@@ -244,13 +244,13 @@ export const DownloadFileRequest = new DownloadFileRequest$Type();
 class DownloadFileResponse$Type extends MessageType<DownloadFileResponse> {
     constructor() {
         super("filefarm.file.DownloadFileResponse", [
-            { no: 1, name: "content", kind: "scalar", T: 12 /*ScalarType.BYTES*/ },
+            { no: 1, name: "content", kind: "scalar", T: 9 /*ScalarType.STRING*/ },
             { no: 2, name: "mimetype", kind: "scalar", T: 9 /*ScalarType.STRING*/ }
         ]);
     }
     create(value?: PartialMessage<DownloadFileResponse>): DownloadFileResponse {
         const message = globalThis.Object.create((this.messagePrototype!));
-        message.content = new Uint8Array(0);
+        message.content = "";
         message.mimetype = "";
         if (value !== undefined)
             reflectionMergePartial<DownloadFileResponse>(this, message, value);
@@ -261,8 +261,8 @@ class DownloadFileResponse$Type extends MessageType<DownloadFileResponse> {
         while (reader.pos < end) {
             let [fieldNo, wireType] = reader.tag();
             switch (fieldNo) {
-                case /* bytes content */ 1:
-                    message.content = reader.bytes();
+                case /* string content */ 1:
+                    message.content = reader.string();
                     break;
                 case /* string mimetype */ 2:
                     message.mimetype = reader.string();
@@ -279,9 +279,9 @@ class DownloadFileResponse$Type extends MessageType<DownloadFileResponse> {
         return message;
     }
     internalBinaryWrite(message: DownloadFileResponse, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
-        /* bytes content = 1; */
-        if (message.content.length)
-            writer.tag(1, WireType.LengthDelimited).bytes(message.content);
+        /* string content = 1; */
+        if (message.content !== "")
+            writer.tag(1, WireType.LengthDelimited).string(message.content);
         /* string mimetype = 2; */
         if (message.mimetype !== "")
             writer.tag(2, WireType.LengthDelimited).string(message.mimetype);

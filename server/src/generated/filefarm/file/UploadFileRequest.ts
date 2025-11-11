@@ -3,12 +3,12 @@
 
 export interface UploadFileRequest {
   'filename'?: (string);
-  'content'?: (Buffer | Uint8Array | string);
+  'content'?: (string);
   'mimetype'?: (string);
 }
 
 export interface UploadFileRequest__Output {
   'filename'?: (string);
-  'content'?: (Buffer);
+  'content'?: (string);
   'mimetype'?: (string);
 }
