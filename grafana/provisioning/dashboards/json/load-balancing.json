@@ -1,0 +1,282 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus" },
+      "description": "Сколько gRPC-запросов в секунду обрабатывает каждый backend (server-1/2/3). Главный график для проверки балансировки: при ROUND_ROBIN линии должны быть примерно равны.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "sum by (exported_instance, method) (rate(file_farm_grpc_requests_total[1m]))",
+          "legendFormat": "server-{{exported_instance}} {{method}}",
+          "refId": "A"
+        }
+      ],
+      "title": "gRPC requests rate per server instance",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus" },
+      "description": "Синие линии — запросы, которые прямо сейчас выполняются внутри каждого сервера. Зелёная — сколько активных соединений Envoy держит к backend-кластеру grpc_backend.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "file_farm_grpc_active_requests",
+          "legendFormat": "in-flight server-{{exported_instance}}",
+          "refId": "A"
+        },
+        {
+          "expr": "envoy_cluster_upstream_cx_active{envoy_cluster_name=\"grpc_backend\"}",
+          "legendFormat": "envoy upstream connections",
+          "refId": "B"
+        }
+      ],
+      "title": "Active connections / in-flight requests",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus" },
+      "description": "Загрузка CPU контейнера в ядрах. Лимит — 1.0 (одно ядро). Значение около 1.0 означает, что контейнер упёрся в лимит.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "max": 1,
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 3,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "rate(container_cpu_usage_seconds_total{name=~\"file-farm-server-[123]\"}[1m])",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ],
+      "title": "CPU usage per server container (cores)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus" },
+      "description": "Сколько RAM использует каждый контейнер сервера. Лимит — 1 GB.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 4,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "container_memory_usage_bytes{name=~\"file-farm-server-[123]\"}",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Memory usage per server container",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus" },
+      "description": "Скорость чтения/записи на диск внутри контейнера. Растёт при UploadFile/DownloadFile (запись/чтение файлов в uploads/).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "id": 5,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "rate(container_fs_reads_bytes_total{name=~\"file-farm-server-[123]\"}[1m])",
+          "legendFormat": "read {{name}}",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(container_fs_writes_bytes_total{name=~\"file-farm-server-[123]\"}[1m])",
+          "legendFormat": "write {{name}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Disk I/O per server container",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus" },
+      "description": "Сетевой трафик контейнера: rx — входящий (запросы от Envoy), tx — исходящий (ответы, запросы к Postgres).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "id": 6,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "rate(container_network_receive_bytes_total{name=~\"file-farm-server-[123]\"}[1m])",
+          "legendFormat": "rx {{name}}",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(container_network_transmit_bytes_total{name=~\"file-farm-server-[123]\"}[1m])",
+          "legendFormat": "tx {{name}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Network I/O per server container",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus" },
+      "description": "Показывает, что Docker принудительно ограничивает CPU (контейнер хотел больше 1 ядра, но не получил). Ненулевое значение = лимит CPU реально срабатывает.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "id": 7,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "rate(container_cpu_cfs_throttled_seconds_total{name=~\"file-farm-server-[123]\"}[1m])",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ],
+      "title": "CPU throttling (limit hit indicator)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus" },
+      "description": "total upstream rq — суммарный RPS через Envoy к кластеру grpc_backend (все 3 сервера). healthy endpoints — сколько backend'ов прошли health check (должно быть 3).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "reqps"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "healthy endpoints" },
+            "properties": [{ "id": "unit", "value": "short" }]
+          }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "id": 8,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "sum(rate(envoy_cluster_upstream_rq_total{envoy_cluster_name=\"grpc_backend\"}[1m]))",
+          "legendFormat": "total upstream rq",
+          "refId": "A"
+        },
+        {
+          "expr": "envoy_cluster_membership_healthy{envoy_cluster_name=\"grpc_backend\"}",
+          "legendFormat": "healthy endpoints",
+          "refId": "B"
+        }
+      ],
+      "title": "Envoy upstream request rate and healthy endpoints",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["file-farm", "load-balancing", "envoy"],
+  "templating": { "list": [] },
+  "time": { "from": "now-15m", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "File Farm Load Balancing",
+  "uid": "file-farm-lb",
+  "version": 2
+}

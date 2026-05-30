@@ -11,6 +11,9 @@ COPY client/ .
 ARG VITE_API_URL
 ENV VITE_API_URL=$VITE_API_URL
 
+ARG VITE_LOAD_STAND_URL=http://localhost:8081
+ENV VITE_LOAD_STAND_URL=$VITE_LOAD_STAND_URL
+
 RUN npm run build
 
 FROM node:20-alpine AS production

@@ -9,6 +9,7 @@ import { UploadFileResponse } from '../generated/filefarm/file/UploadFileRespons
 import { DownloadFileRequest__Output } from '../generated/filefarm/file/DownloadFileRequest';
 import { DownloadFileResponse } from '../generated/filefarm/file/DownloadFileResponse';
 import { fileRepository } from '../persistance/query/FileRepository';
+import { recordGrpcRequestEnd, recordGrpcRequestStart } from '../utils/metrics';
 
 // Ensure uploads directory exists
 async function ensureUploadsDir(): Promise<void> {
@@ -31,6 +32,7 @@ export async function UploadFile(
     callback: sendUnaryData<UploadFileResponse>
 ) {
     const request: UploadFileRequest__Output = call.request;
+    recordGrpcRequestStart();
     
     try {
         if (!request.content || request.content.length === 0) {
@@ -79,6 +81,7 @@ export async function UploadFile(
             success: true
         };
 
+        recordGrpcRequestEnd('UploadFile', 'ok');
         callback(null, response);
     } catch (error) {
         logger.error('Error uploading file:', error);
@@ -90,6 +93,7 @@ export async function UploadFile(
             success: false
         };
 
+        recordGrpcRequestEnd('UploadFile', 'error');
         callback(null, response);
     }
 }
@@ -99,6 +103,7 @@ export async function DownloadFile(
     callback: sendUnaryData<DownloadFileResponse>
 ) {
     const request: DownloadFileRequest__Output = call.request;
+    recordGrpcRequestStart();
     
     try {
         if (!request.filename) {
@@ -133,6 +138,7 @@ export async function DownloadFile(
             mimetype: file.mimetype
         };
 
+        recordGrpcRequestEnd('DownloadFile', 'ok');
         callback(null, response);
     } catch (error) {
         logger.error('Error downloading file:', error);
@@ -144,6 +150,7 @@ export async function DownloadFile(
             mimetype: 'application/octet-stream'
         };
 
+        recordGrpcRequestEnd('DownloadFile', 'error');
         callback(null, response);
     }
 }

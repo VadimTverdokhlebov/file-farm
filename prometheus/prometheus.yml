@@ -8,10 +8,27 @@ scrape_configs:
   - job_name: 'envoy'
     metrics_path: '/stats/prometheus'
     static_configs:
-      - targets: ['172.20.0.6:9901']
+      - targets: ['file-farm-envoy:9901']
         labels:
           service: 'envoy-proxy'
           instance: 'file-farm-envoy'
+
+  - job_name: 'server'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets:
+          - 'file-farm-server-1:9092'
+          - 'file-farm-server-2:9092'
+          - 'file-farm-server-3:9092'
+        labels:
+          service: 'grpc-server'
+
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['file-farm-cadvisor:8080']
+        labels:
+          service: 'cadvisor'
+          instance: 'file-farm-cadvisor'
 
   - job_name: 'prometheus'
     static_configs:
@@ -19,4 +36,3 @@ scrape_configs:
         labels:
           service: 'prometheus'
           instance: 'file-farm-prometheus'
-

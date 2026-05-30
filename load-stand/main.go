@@ -10,6 +10,21 @@ import (
 	"load-stand/engine"
 )
 
+func withCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 func main() {
 	cfg := config.New()
 
@@ -22,11 +37,12 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/endpoints", apiHandler.HandleEndpoints)
+	mux.HandleFunc("/api/presets", apiHandler.HandlePresets)
 	mux.HandleFunc("/ws", apiHandler.HandleWebSocket)
 
 	listenAddr := fmt.Sprintf(":%d", cfg.HttpPort)
 	log.Printf("Load stand server listening at http://localhost%s", listenAddr)
-	if err := http.ListenAndServe(listenAddr, mux); err != nil {
+	if err := http.ListenAndServe(listenAddr, withCORS(mux)); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }

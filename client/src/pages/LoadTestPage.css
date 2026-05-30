@@ -1,8 +1,13 @@
 .dashboard {
     font-family: sans-serif;
     padding: 20px;
-    max-width: 800px;
+    max-width: 960px;
     margin: 0 auto;
+}
+
+.hint {
+    color: #555;
+    line-height: 1.5;
 }
 
 .form-container, .status-container {
@@ -12,8 +17,42 @@
     margin-bottom: 20px;
 }
 
-.form-group, .endpoints-group {
+.form-group, .endpoints-group, .presets-group {
     margin-bottom: 15px;
+}
+
+.form-row {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+
+.presets-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 12px;
+}
+
+.preset-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    text-align: left;
+    padding: 12px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    background: #fafafa;
+    cursor: pointer;
+}
+
+.preset-card-active {
+    border-color: #007bff;
+    background: #eef5ff;
+}
+
+.preset-card span {
+    font-size: 14px;
+    color: #555;
 }
 
 label {
@@ -24,7 +63,7 @@ label {
 
 input[type="number"] {
     padding: 8px;
-    width: 100px;
+    width: 120px;
     border: 1px solid #ccc;
     border-radius: 4px;
 }
@@ -88,4 +127,22 @@ button:disabled {
 .error {
     color: red;
     font-weight: bold;
+}
+
+.endpoint-stats table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 12px;
+}
+
+.endpoint-stats th,
+.endpoint-stats td {
+    border: 1px solid #ddd;
+    padding: 8px;
+    text-align: left;
+    font-size: 14px;
+}
+
+.endpoint-stats th {
+    background: #f5f5f5;
 }

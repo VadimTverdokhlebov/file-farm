@@ -7,6 +7,7 @@ services:
       dockerfile: client/Dockerfile
       args:
         VITE_API_URL: ${VITE_API_URL}
+        VITE_LOAD_STAND_URL: ${VITE_LOAD_STAND_URL:-http://localhost:8081}
     container_name: file-farm-client
     ports:
       - "${CLIENT_PORT}:${CLIENT_PORT}"

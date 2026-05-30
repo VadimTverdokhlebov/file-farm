@@ -19,15 +19,26 @@ import (
 	rpb "google.golang.org/grpc/reflection/grpc_reflection_v1alpha"
 )
 
+const maxGrpcMessageSize = 64 * 1024 * 1024
+
+type EndpointStats struct {
+	SuccessfulRequests atomic.Int64
+	FailedRequests     atomic.Int64
+}
+
 type Stats struct {
 	SuccessfulRequests atomic.Int64
 	FailedRequests     atomic.Int64
+	EndpointStats      map[string]*EndpointStats
 }
 
 type TestConfig struct {
 	Concurrency int      `json:"concurrency"`
 	Duration    int      `json:"duration"`
 	Endpoints   []string `json:"endpoints"`
+	Preset      string   `json:"preset"`
+	FileSizeKB  int      `json:"fileSizeKb"`
+	WarmupFiles int      `json:"warmupFiles"`
 }
 
 type Engine struct {
@@ -47,7 +58,14 @@ func NewEngine(target string, protoDir string) (*Engine, error) {
 		return nil, fmt.Errorf("failed to initialize engine: %w", err)
 	}
 
-	conn, err := grpc.Dial(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.Dial(
+		target,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(maxGrpcMessageSize),
+			grpc.MaxCallSendMsgSize(maxGrpcMessageSize),
+		),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to target '%s': %w", target, err)
 	}
@@ -57,6 +75,9 @@ func NewEngine(target string, protoDir string) (*Engine, error) {
 		availableMethods: endpoints,
 		conn:             conn,
 		stub:             grpcdynamic.NewStub(conn),
+		stats: Stats{
+			EndpointStats: make(map[string]*EndpointStats),
+		},
 	}, nil
 }
 
@@ -70,7 +91,28 @@ func (e *Engine) GetStatus() (bool, *Stats) {
 	return e.isRunning, &e.stats
 }
 
-func (e *Engine) StartTest(config TestConfig) error {
+func (e *Engine) getEndpointStats(endpoint string) *EndpointStats {
+	if stats, ok := e.stats.EndpointStats[endpoint]; ok {
+		return stats
+	}
+	stats := &EndpointStats{}
+	e.stats.EndpointStats[endpoint] = stats
+	return stats
+}
+
+func (e *Engine) recordResult(endpoint string, success bool) {
+	if success {
+		e.stats.SuccessfulRequests.Add(1)
+		e.getEndpointStats(endpoint).SuccessfulRequests.Add(1)
+		return
+	}
+	e.stats.FailedRequests.Add(1)
+	e.getEndpointStats(endpoint).FailedRequests.Add(1)
+}
+
+func (e *Engine) StartTest(rawConfig TestConfig) error {
+	config := rawConfig.WithDefaults()
+
 	e.mu.Lock()
 	if e.isRunning {
 		e.mu.Unlock()
@@ -83,18 +125,69 @@ func (e *Engine) StartTest(config TestConfig) error {
 	e.isRunning = true
 	e.stats.SuccessfulRequests.Store(0)
 	e.stats.FailedRequests.Store(0)
+	e.stats.EndpointStats = make(map[string]*EndpointStats)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	e.cancelFunc = cancel
 	e.mu.Unlock()
 
-	log.Printf("Starting test: %d clients, %d seconds, endpoints: %v", config.Concurrency, config.Duration, config.Endpoints)
+	log.Printf(
+		"Starting test: concurrency=%d duration=%ds fileSizeKb=%d warmupFiles=%d preset=%q endpoints=%v",
+		config.Concurrency,
+		config.Duration,
+		config.FileSizeKB,
+		config.WarmupFiles,
+		config.Preset,
+		config.Endpoints,
+	)
 
+	methodDescriptors, err := e.resolveMethodDescriptors(ctx, config.Endpoints)
+	if err != nil {
+		e.StopTest()
+		return err
+	}
+
+	builder := NewPayloadBuilder(config.FileSizeKB)
+	if err := e.runWarmup(ctx, methodDescriptors, config, builder); err != nil {
+		log.Printf("Warmup warning: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < config.Concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			e.runVirtualUser(ctx, methodDescriptors, builder)
+		}()
+	}
+
+	if config.Duration > 0 {
+		go func() {
+			time.Sleep(time.Duration(config.Duration) * time.Second)
+			log.Println("Test duration expired, stopping...")
+			e.StopTest()
+		}()
+	}
+
+	go func() {
+		wg.Wait()
+		e.mu.Lock()
+		if e.isRunning {
+			e.isRunning = false
+			log.Println("All virtual users finished")
+		}
+		e.mu.Unlock()
+	}()
+
+	return nil
+}
+
+func (e *Engine) resolveMethodDescriptors(ctx context.Context, endpoints []string) (map[string]*desc.MethodDescriptor, error) {
 	refClient := rpb.NewServerReflectionClient(e.conn)
 	refl := grpcreflect.NewClient(ctx, refClient)
 
 	methodDescriptors := make(map[string]*desc.MethodDescriptor)
-	for _, endpoint := range config.Endpoints {
+	for _, endpoint := range endpoints {
 		fullyQualifiedName := strings.TrimPrefix(endpoint, "/")
 		serviceName := fullyQualifiedName[:strings.LastIndex(fullyQualifiedName, "/")]
 		methodName := fullyQualifiedName[strings.LastIndex(fullyQualifiedName, "/")+1:]
@@ -113,27 +206,41 @@ func (e *Engine) StartTest(config TestConfig) error {
 	}
 
 	if len(methodDescriptors) == 0 {
-		e.StopTest()
-		return fmt.Errorf("none of the selected endpoints found via reflection")
+		return nil, fmt.Errorf("none of the selected endpoints found via reflection")
 	}
 
-	var wg sync.WaitGroup
-	for i := 0; i < config.Concurrency; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			e.runVirtualUser(ctx, methodDescriptors)
-		}()
+	return methodDescriptors, nil
+}
+
+func (e *Engine) runWarmup(ctx context.Context, methods map[string]*desc.MethodDescriptor, config TestConfig, builder *PayloadBuilder) error {
+	if !config.needsDownloadWarmup() || config.WarmupFiles <= 0 {
+		return nil
 	}
 
-	if config.Duration > 0 {
-		go func() {
-			time.Sleep(time.Duration(config.Duration) * time.Second)
-			log.Println("Test duration expired, stopping...")
-			e.StopTest()
-		}()
+	uploadMD, ok := methods[UploadFileRPC]
+	if ok {
+		log.Printf("Warmup: uploading %d files before download load", config.WarmupFiles)
+		for i := 0; i < config.WarmupFiles; i++ {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			req := dynamic.NewMessage(uploadMD.GetInputType())
+			if err := builder.Populate(uploadMD, req); err != nil {
+				return err
+			}
+			resp, err := e.stub.InvokeRpc(ctx, uploadMD, req)
+			if err != nil {
+				e.recordResult(UploadFileRPC, false)
+				continue
+			}
+			_ = resp
+			builder.HandleResponse(uploadMD, req)
+			e.recordResult(UploadFileRPC, true)
+		}
+		return nil
 	}
 
+	log.Printf("Warmup skipped: DownloadFile selected but UploadFile is not available")
 	return nil
 }
 
@@ -151,7 +258,7 @@ func (e *Engine) StopTest() {
 	log.Println("Test stopped")
 }
 
-func (e *Engine) runVirtualUser(ctx context.Context, methodDescriptors map[string]*desc.MethodDescriptor) {
+func (e *Engine) runVirtualUser(ctx context.Context, methodDescriptors map[string]*desc.MethodDescriptor, builder *PayloadBuilder) {
 	endpoints := make([]string, 0, len(methodDescriptors))
 	for k := range methodDescriptors {
 		endpoints = append(endpoints, k)
@@ -166,12 +273,31 @@ func (e *Engine) runVirtualUser(ctx context.Context, methodDescriptors map[strin
 			md := methodDescriptors[endpoint]
 			inputMsg := dynamic.NewMessage(md.GetInputType())
 
-			_, err := e.stub.InvokeRpc(ctx, md, inputMsg)
-			if err != nil {
-				e.stats.FailedRequests.Add(1)
-			} else {
-				e.stats.SuccessfulRequests.Add(1)
+			if err := builder.Populate(md, inputMsg); err != nil {
+				e.recordResult(endpoint, false)
+				continue
 			}
+
+			resp, err := e.stub.InvokeRpc(ctx, md, inputMsg)
+			if err != nil {
+				e.recordResult(endpoint, false)
+				continue
+			}
+
+			_ = resp
+			builder.HandleResponse(md, inputMsg)
+			e.recordResult(endpoint, true)
 		}
 	}
+}
+
+func (s *Stats) SnapshotEndpointStats() map[string]map[string]int64 {
+	result := make(map[string]map[string]int64)
+	for endpoint, stats := range s.EndpointStats {
+		result[endpoint] = map[string]int64{
+			"successfulRequests": stats.SuccessfulRequests.Load(),
+			"failedRequests":     stats.FailedRequests.Load(),
+		}
+	}
+	return result
 }

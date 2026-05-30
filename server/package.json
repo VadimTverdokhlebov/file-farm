@@ -25,6 +25,7 @@
     "@grpc/reflection": "^1.0.4",
     "dotenv": "^16.0.0",
     "pg": "^8.11.3",
+    "prom-client": "^15.1.3",
     "reflect-metadata": "^0.1.13",
     "typeorm": "^0.3.17",
     "uuid": "^9.0.1",

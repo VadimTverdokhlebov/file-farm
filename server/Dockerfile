@@ -27,6 +27,6 @@ COPY --from=build /src/protos ./protos
 
 RUN mkdir -p logs
 
-EXPOSE 50051
+EXPOSE 50051 9092
 
 CMD ["npm", "start"]

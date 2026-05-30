@@ -20,12 +20,19 @@ help:
 	@echo "  make up-envoy         - Start envoy only"
 	@echo "  make up-postgres      - Start postgres only"
 	@echo "  make up-prometheus    - Start prometheus only"
+	@echo "  make up-grafana       - Start grafana only"
+	@echo "  make up-cadvisor      - Start cadvisor only"
+	@echo "  make up-monitoring    - Start prometheus, grafana and cadvisor"
+	@echo "  make up-load-stand    - Start load testing stand"
 	@echo "  make down             - Stop all services"
 	@echo "  make down-server      - Stop server only"
 	@echo "  make down-client      - Stop client only"
 	@echo "  make down-envoy       - Stop envoy only"
 	@echo "  make down-postgres    - Stop postgres only"
 	@echo "  make down-prometheus  - Stop prometheus only"
+	@echo "  make down-grafana     - Stop grafana only"
+	@echo "  make down-cadvisor    - Stop cadvisor only"
+	@echo "  make down-load-stand  - Stop load testing stand"
 	@echo ""
 	@echo "Logs:"
 	@echo "  make logs-server      - View server logs"
@@ -33,6 +40,9 @@ help:
 	@echo "  make logs-envoy       - View envoy logs"
 	@echo "  make logs-client      - View client logs"
 	@echo "  make logs-prometheus  - View prometheus logs"
+	@echo "  make logs-grafana     - View grafana logs"
+	@echo "  make logs-cadvisor    - View cadvisor logs"
+	@echo "  make logs-load-stand  - View load stand logs"
 	@echo ""
 	@echo "Maintenance:"
 	@echo "  make clean            - Remove all containers, volumes and networks"
@@ -74,6 +84,7 @@ up-server:
 	@cd server && docker-compose up -d
 
 up-client:
+	@cd client && docker-compose down --remove-orphans 2>/dev/null || true
 	@cd client && docker-compose up -d
 
 up-envoy:
@@ -86,12 +97,26 @@ up-postgres:
 up-prometheus:
 	@cd prometheus && docker-compose up -d
 
+up-grafana:
+	@cd grafana && docker-compose up -d
+
+up-cadvisor:
+	@cd cadvisor && docker-compose up -d
+
+up-monitoring:
+	@make up-prometheus
+	@make up-cadvisor
+	@make up-grafana
+
+up-load-stand:
+	@cd load-stand && docker-compose up -d --build
+
 up:
 	@make up-postgres
 	@make up-server
 	@make up-envoy
 	@make up-client
-	@make up-prometheus
+	@make up-monitoring
 
 build-server:
 	@cd server && docker-compose build
@@ -132,12 +157,24 @@ down-postgres:
 down-prometheus:
 	@cd prometheus && docker-compose down
 
+down-grafana:
+	@cd grafana && docker-compose down
+
+down-cadvisor:
+	@cd cadvisor && docker-compose down
+
+down-load-stand:
+	@cd load-stand && docker-compose down
+
 down:
 	@make down-server
 	@make down-client
 	@make down-envoy
 	@make down-postgres
 	@make down-prometheus
+	@make down-grafana
+	@make down-cadvisor
+	@make down-load-stand
 
 logs-server:
 	@cd server && docker-compose logs -f
@@ -154,10 +191,22 @@ logs-client:
 logs-prometheus:
 	@cd prometheus && docker-compose logs -f
 
+logs-grafana:
+	@cd grafana && docker-compose logs -f
+
+logs-cadvisor:
+	@cd cadvisor && docker-compose logs -f
+
+logs-load-stand:
+	@cd load-stand && docker-compose logs -f
+
 clean:
 	@cd server && docker-compose down -v
 	@cd client && docker-compose down -v
 	@cd envoy && docker-compose down -v
 	@cd postgres && docker-compose down -v
 	@cd prometheus && docker-compose down -v
+	@cd grafana && docker-compose down -v
+	@cd cadvisor && docker-compose down -v
+	@cd load-stand && docker-compose down -v
 	@-docker network rm appnet 2>/dev/null || true

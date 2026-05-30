@@ -28,13 +28,19 @@ type wsCommand struct {
 }
 
 type jsonStats struct {
-	SuccessfulRequests int64 `json:"successfulRequests"`
-	FailedRequests     int64 `json:"failedRequests"`
+	SuccessfulRequests int64                              `json:"successfulRequests"`
+	FailedRequests     int64                              `json:"failedRequests"`
+	EndpointStats      map[string]map[string]int64        `json:"endpointStats,omitempty"`
 }
 
 func (h *Handler) HandleEndpoints(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(h.engine.GetAvailableMethods())
+}
+
+func (h *Handler) HandlePresets(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(engine.GetPresets())
 }
 
 func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -63,6 +69,7 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 						"stats": jsonStats{
 							SuccessfulRequests: stats.SuccessfulRequests.Load(),
 							FailedRequests:     stats.FailedRequests.Load(),
+							EndpointStats:      stats.SnapshotEndpointStats(),
 						},
 					},
 				}); err != nil {

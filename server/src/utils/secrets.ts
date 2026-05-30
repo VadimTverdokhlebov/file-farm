@@ -19,6 +19,8 @@ const GRPC_PORT = process.env.GRPC_PORT;
 const GRPC_PROTO_FILE = process.env.GRPC_PROTO_FILE;
 
 const FILES_SAVE_DIR = process.env.FILES_SAVE_DIR;
+const INSTANCE_ID = process.env.INSTANCE_ID || 'unknown';
+const METRICS_PORT = process.env.METRICS_PORT || '9092';
 
 
 if (!FILES_SAVE_DIR) {
@@ -51,5 +53,9 @@ export const config = {
     },
     files: {
         dir: FILES_SAVE_DIR,
+    },
+    metrics: {
+        port: parseInt(METRICS_PORT, 10),
+        instanceId: INSTANCE_ID,
     },
 };

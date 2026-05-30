@@ -1,20 +1,20 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { TestStatus, TestConfig } from '../types/loadTest';
+import { TestStatus, TestConfig, LoadPreset } from '../types/loadTest';
+import { fetchLoadStandJson, getLoadStandWsUrl } from '../config/loadStand';
 
 interface UseLoadTestReturn {
   endpoints: string[];
+  presets: LoadPreset[];
   status: TestStatus;
   startTest: (config: TestConfig) => void;
   stopTest: () => void;
   error: string | null;
+  isLoading: boolean;
 }
 
 interface StatusPayload {
   isRunning: boolean;
-  stats: {
-    successfulRequests: number;
-    failedRequests: number;
-  };
+  stats: TestStatus['stats'];
 }
 
 interface ErrorPayload {
@@ -28,29 +28,40 @@ interface WebSocketMessage {
 
 export const useLoadTest = (): UseLoadTestReturn => {
   const [endpoints, setEndpoints] = useState<string[]>([]);
+  const [presets, setPresets] = useState<LoadPreset[]>([]);
   const [status, setStatus] = useState<TestStatus>({
     isRunning: false,
     stats: { successfulRequests: 0, failedRequests: 0 },
   });
   const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const ws = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    const fetchEndpoints = async () => {
+    const fetchData = async () => {
       try {
-        const response = await fetch('/api/endpoints');
-        if (!response.ok) throw new Error('Failed to fetch endpoints');
-        const data: string[] = await response.json();
-        setEndpoints(data || []);
+        const [endpointsData, presetsData] = await Promise.all([
+          fetchLoadStandJson<string[]>('/api/endpoints'),
+          fetchLoadStandJson<LoadPreset[]>('/api/presets'),
+        ]);
+
+        setEndpoints(endpointsData || []);
+        setPresets(presetsData || []);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unknown error');
+      } finally {
+        setIsLoading(false);
       }
     };
 
-    fetchEndpoints();
+    fetchData();
 
-    const wsUrl = `ws://${window.location.host}/ws`;
+    const wsUrl = getLoadStandWsUrl();
     ws.current = new WebSocket(wsUrl);
+
+    ws.current.onerror = () => {
+      setError('WebSocket connection to load stand failed. Run: make up-load-stand');
+    };
 
     ws.current.onmessage = (event) => {
       try {
@@ -62,6 +73,7 @@ export const useLoadTest = (): UseLoadTestReturn => {
             stats: {
               successfulRequests: Number(payload.stats.successfulRequests) || 0,
               failedRequests: Number(payload.stats.failedRequests) || 0,
+              endpointStats: payload.stats.endpointStats || {},
             },
           });
         } else if (message.type === 'error') {
@@ -81,12 +93,12 @@ export const useLoadTest = (): UseLoadTestReturn => {
       setError(null);
       ws.current.send(JSON.stringify({ action, payload }));
     } else {
-      setError('WebSocket is not connected');
+      setError('WebSocket is not connected. Run: make up-load-stand');
     }
   }, []);
 
   const startTest = useCallback((config: TestConfig) => sendCommand('start', config), [sendCommand]);
   const stopTest = useCallback(() => sendCommand('stop'), [sendCommand]);
 
-  return { endpoints, status, startTest, stopTest, error };
+  return { endpoints, presets, status, startTest, stopTest, error, isLoading };
 };

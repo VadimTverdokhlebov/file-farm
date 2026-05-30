@@ -79,16 +79,19 @@ static_resources:
   clusters:
     - name: grpc_backend
       connect_timeout: 5s
-      type: logical_dns
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
       http2_protocol_options: {}
-      lb_policy: round_robin
+      # Change lb_policy to test other algorithms: LEAST_REQUEST, RANDOM, MAGLEV, RING_HASH
+      lb_policy: ROUND_ROBIN
+      track_cluster_stats:
+        per_endpoint_stats: true
       health_checks:
         - timeout: 1s
           interval: 5s
           unhealthy_threshold: 2
           healthy_threshold: 1
-          grpc_health_check:
-            service_name: ""
+          tcp_health_check: {}
       load_assignment:
         cluster_name: grpc_backend
         endpoints:
@@ -96,5 +99,15 @@ static_resources:
               - endpoint:
                   address:
                     socket_address:
-                      address: host.docker.internal
+                      address: file-farm-server-1
+                      port_value: 50051
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: file-farm-server-2
+                      port_value: 50051
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: file-farm-server-3
                       port_value: 50051

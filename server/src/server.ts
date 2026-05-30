@@ -4,11 +4,14 @@ import logger from './utils/logger';
 import getServer from './app';
 import { config } from './utils/secrets';
 import { initializeDatabase, closeDatabase } from './db';
+import { startMetricsServer } from './utils/metrics';
 
 (async () => {
     try {
         // Initialize database connection
         await initializeDatabase();
+
+        startMetricsServer(config.metrics.port);
 
         // Initialize gRPC server
         const server = getServer();
