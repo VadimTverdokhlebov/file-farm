@@ -7,6 +7,8 @@ services:
       - UPDATE_INTERVAL_SEC=1
       - LB_ALGORITHM=round_robin
       - CLUSTER_NAME=grpc_backend
+      - METRICS_PORT=9093
+      - BACKEND_WEIGHTS=100,100,100
     volumes:
       - ../envoy/dynamic:/etc/envoy/dynamic
     networks:

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
@@ -15,8 +16,12 @@ import (
 	"github.com/jhump/protoreflect/dynamic/grpcdynamic"
 	"github.com/jhump/protoreflect/grpcreflect"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	rpb "google.golang.org/grpc/reflection/grpc_reflection_v1alpha"
+
+	"load-stand/metrics"
 )
 
 const maxGrpcMessageSize = 64 * 1024 * 1024
@@ -101,6 +106,7 @@ func (e *Engine) getEndpointStats(endpoint string) *EndpointStats {
 }
 
 func (e *Engine) recordResult(endpoint string, success bool) {
+	metrics.RecordRequest(endpoint, success)
 	if success {
 		e.stats.SuccessfulRequests.Add(1)
 		e.getEndpointStats(endpoint).SuccessfulRequests.Add(1)
@@ -108,6 +114,19 @@ func (e *Engine) recordResult(endpoint string, success bool) {
 	}
 	e.stats.FailedRequests.Add(1)
 	e.getEndpointStats(endpoint).FailedRequests.Add(1)
+}
+
+func isStopError(ctx context.Context, err error) bool {
+	if ctx.Err() != nil {
+		return true
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	if st, ok := status.FromError(err); ok && st.Code() == codes.Canceled {
+		return true
+	}
+	return false
 }
 
 func (e *Engine) StartTest(rawConfig TestConfig) error {
@@ -130,6 +149,12 @@ func (e *Engine) StartTest(rawConfig TestConfig) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	e.cancelFunc = cancel
 	e.mu.Unlock()
+
+	preset := config.Preset
+	if preset == "" {
+		preset = "custom"
+	}
+	metrics.SetTestRunning(preset, config.Concurrency, config.Duration, config.FileSizeKB)
 
 	log.Printf(
 		"Starting test: concurrency=%d duration=%ds fileSizeKb=%d warmupFiles=%d preset=%q endpoints=%v",
@@ -230,6 +255,9 @@ func (e *Engine) runWarmup(ctx context.Context, methods map[string]*desc.MethodD
 			}
 			resp, err := e.stub.InvokeRpc(ctx, uploadMD, req)
 			if err != nil {
+				if isStopError(ctx, err) {
+					return ctx.Err()
+				}
 				e.recordResult(UploadFileRPC, false)
 				continue
 			}
@@ -255,6 +283,7 @@ func (e *Engine) StopTest() {
 	}
 	e.isRunning = false
 	e.mu.Unlock()
+	metrics.SetTestStopped()
 	log.Println("Test stopped")
 }
 
@@ -274,12 +303,18 @@ func (e *Engine) runVirtualUser(ctx context.Context, methodDescriptors map[strin
 			inputMsg := dynamic.NewMessage(md.GetInputType())
 
 			if err := builder.Populate(md, inputMsg); err != nil {
+				if ctx.Err() != nil {
+					return
+				}
 				e.recordResult(endpoint, false)
 				continue
 			}
 
 			resp, err := e.stub.InvokeRpc(ctx, md, inputMsg)
 			if err != nil {
+				if isStopError(ctx, err) {
+					return
+				}
 				e.recordResult(endpoint, false)
 				continue
 			}

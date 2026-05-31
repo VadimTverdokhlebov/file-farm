@@ -32,7 +32,7 @@ export async function UploadFile(
     callback: sendUnaryData<UploadFileResponse>
 ) {
     const request: UploadFileRequest__Output = call.request;
-    recordGrpcRequestStart();
+    const startedAt = recordGrpcRequestStart();
     
     try {
         if (!request.content || request.content.length === 0) {
@@ -81,7 +81,7 @@ export async function UploadFile(
             success: true
         };
 
-        recordGrpcRequestEnd('UploadFile', 'ok');
+        recordGrpcRequestEnd('UploadFile', 'ok', startedAt);
         callback(null, response);
     } catch (error) {
         logger.error('Error uploading file:', error);
@@ -93,7 +93,7 @@ export async function UploadFile(
             success: false
         };
 
-        recordGrpcRequestEnd('UploadFile', 'error');
+        recordGrpcRequestEnd('UploadFile', 'error', startedAt);
         callback(null, response);
     }
 }
@@ -103,7 +103,7 @@ export async function DownloadFile(
     callback: sendUnaryData<DownloadFileResponse>
 ) {
     const request: DownloadFileRequest__Output = call.request;
-    recordGrpcRequestStart();
+    const startedAt = recordGrpcRequestStart();
     
     try {
         if (!request.filename) {
@@ -138,7 +138,7 @@ export async function DownloadFile(
             mimetype: file.mimetype
         };
 
-        recordGrpcRequestEnd('DownloadFile', 'ok');
+        recordGrpcRequestEnd('DownloadFile', 'ok', startedAt);
         callback(null, response);
     } catch (error) {
         logger.error('Error downloading file:', error);
@@ -150,7 +150,7 @@ export async function DownloadFile(
             mimetype: 'application/octet-stream'
         };
 
-        recordGrpcRequestEnd('DownloadFile', 'error');
+        recordGrpcRequestEnd('DownloadFile', 'error', startedAt);
         callback(null, response);
     }
 }

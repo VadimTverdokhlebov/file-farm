@@ -102,11 +102,11 @@ func (b *PayloadBuilder) fillDownload(msg *dynamic.Message) error {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	filename := "loadtest_warmup.bin"
-	if len(b.uploadedFiles) > 0 {
-		filename = b.uploadedFiles[mathrand.Intn(len(b.uploadedFiles))]
+	if len(b.uploadedFiles) == 0 {
+		return fmt.Errorf("no uploaded files available for download yet")
 	}
 
+	filename := b.uploadedFiles[mathrand.Intn(len(b.uploadedFiles))]
 	return msg.TrySetFieldByName("filename", filename)
 }
 

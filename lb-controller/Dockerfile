@@ -11,5 +11,6 @@ ENV EDS_PATH=/etc/envoy/dynamic/endpoints.yaml
 ENV UPDATE_INTERVAL_SEC=1
 ENV LB_ALGORITHM=round_robin
 ENV CLUSTER_NAME=grpc_backend
+ENV METRICS_PORT=9093
 
 CMD ["python", "main.py"]

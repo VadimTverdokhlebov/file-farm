@@ -8,6 +8,8 @@ import (
 	"load-stand/api"
 	"load-stand/config"
 	"load-stand/engine"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func withCORS(next http.Handler) http.Handler {
@@ -39,6 +41,7 @@ func main() {
 	mux.HandleFunc("/api/endpoints", apiHandler.HandleEndpoints)
 	mux.HandleFunc("/api/presets", apiHandler.HandlePresets)
 	mux.HandleFunc("/ws", apiHandler.HandleWebSocket)
+	mux.Handle("/metrics", promhttp.Handler())
 
 	listenAddr := fmt.Sprintf(":%d", cfg.HttpPort)
 	log.Printf("Load stand server listening at http://localhost%s", listenAddr)

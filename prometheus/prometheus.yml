@@ -30,6 +30,22 @@ scrape_configs:
           service: 'cadvisor'
           instance: 'file-farm-cadvisor'
 
+  - job_name: 'lb-controller'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['file-farm-lb-controller:9093']
+        labels:
+          service: 'lb-controller'
+          instance: 'file-farm-lb-controller'
+
+  - job_name: 'load-stand'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['file-farm-load-stand:8081']
+        labels:
+          service: 'load-stand'
+          instance: 'file-farm-load-stand'
+
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']

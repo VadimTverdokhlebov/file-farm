@@ -22,11 +22,22 @@ export const grpcActiveRequests = new client.Gauge({
     registers: [register],
 });
 
-export function recordGrpcRequestStart(): void {
+export const grpcRequestDurationSeconds = new client.Histogram({
+    name: 'file_farm_grpc_request_duration_seconds',
+    help: 'gRPC request duration in seconds',
+    labelNames: ['method', 'status'],
+    buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
+    registers: [register],
+});
+
+export function recordGrpcRequestStart(): number {
     grpcActiveRequests.inc();
+    return Date.now();
 }
 
-export function recordGrpcRequestEnd(method: string, status: 'ok' | 'error'): void {
+export function recordGrpcRequestEnd(method: string, status: 'ok' | 'error', startedAtMs: number): void {
+    const durationSec = (Date.now() - startedAtMs) / 1000;
+    grpcRequestDurationSeconds.observe({ method, status }, durationSec);
     grpcRequestsTotal.inc({ method, status });
     grpcActiveRequests.dec();
 }

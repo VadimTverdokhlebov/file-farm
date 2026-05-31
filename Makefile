@@ -118,6 +118,7 @@ up-monitoring:
 	@make up-grafana
 
 up-load-stand:
+	@cd load-stand && docker-compose down --remove-orphans 2>/dev/null || true
 	@cd load-stand && docker-compose up -d --build
 
 up:
