@@ -17,7 +17,8 @@ help:
 	@echo "  make up               - Start all services"
 	@echo "  make up-server        - Start server only"
 	@echo "  make up-client        - Start client only"
-	@echo "  make up-envoy         - Start envoy only"
+	@echo "  make up-envoy         - Start lb-controller and envoy"
+	@echo "  make up-lb-controller - Start load balancer controller only"
 	@echo "  make up-postgres      - Start postgres only"
 	@echo "  make up-prometheus    - Start prometheus only"
 	@echo "  make up-grafana       - Start grafana only"
@@ -27,7 +28,8 @@ help:
 	@echo "  make down             - Stop all services"
 	@echo "  make down-server      - Stop server only"
 	@echo "  make down-client      - Stop client only"
-	@echo "  make down-envoy       - Stop envoy only"
+	@echo "  make down-envoy       - Stop envoy and lb-controller"
+	@echo "  make down-lb-controller - Stop load balancer controller only"
 	@echo "  make down-postgres    - Stop postgres only"
 	@echo "  make down-prometheus  - Stop prometheus only"
 	@echo "  make down-grafana     - Stop grafana only"
@@ -38,6 +40,7 @@ help:
 	@echo "  make logs-server      - View server logs"
 	@echo "  make logs-postgres    - View database logs"
 	@echo "  make logs-envoy       - View envoy logs"
+	@echo "  make logs-lb-controller - View lb-controller logs"
 	@echo "  make logs-client      - View client logs"
 	@echo "  make logs-prometheus  - View prometheus logs"
 	@echo "  make logs-grafana     - View grafana logs"
@@ -87,7 +90,13 @@ up-client:
 	@cd client && docker-compose down --remove-orphans 2>/dev/null || true
 	@cd client && docker-compose up -d
 
+up-lb-controller:
+	@cd lb-controller && docker-compose down --remove-orphans 2>/dev/null || true
+	@cd lb-controller && docker-compose up -d --build
+
 up-envoy:
+	@make up-lb-controller
+	@cd envoy && docker-compose down --remove-orphans 2>/dev/null || true
 	@cd envoy && docker-compose up -d
 
 up-postgres:
@@ -148,8 +157,12 @@ down-server:
 down-client:
 	@cd client && docker-compose down
 
+down-lb-controller:
+	@cd lb-controller && docker-compose down
+
 down-envoy:
 	@cd envoy && docker-compose down
+	@make down-lb-controller
 
 down-postgres:
 	@cd postgres && docker-compose down
@@ -185,6 +198,9 @@ logs-postgres:
 logs-envoy:
 	@cd envoy && docker-compose logs -f
 
+logs-lb-controller:
+	@cd lb-controller && docker-compose logs -f
+
 logs-client:
 	@cd client && docker-compose logs -f
 
@@ -204,6 +220,7 @@ clean:
 	@cd server && docker-compose down -v
 	@cd client && docker-compose down -v
 	@cd envoy && docker-compose down -v
+	@cd lb-controller && docker-compose down -v
 	@cd postgres && docker-compose down -v
 	@cd prometheus && docker-compose down -v
 	@cd grafana && docker-compose down -v

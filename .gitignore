@@ -3,3 +3,4 @@ uploads/*
 server/.env
 postgres/.env
 client/.env
+envoy/dynamic/endpoints.yaml

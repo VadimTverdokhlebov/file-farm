@@ -9,6 +9,7 @@ services:
       - "9901:9901"
     volumes:
       - ./envoy.yaml:/etc/envoy/envoy.yaml:ro
+      - ./dynamic:/etc/envoy/dynamic
     networks:
       - appnet
     extra_hosts:
