@@ -6,6 +6,15 @@ services:
       - EDS_PATH=/etc/envoy/dynamic/endpoints.yaml
       - UPDATE_INTERVAL_SEC=1
       - LB_ALGORITHM=round_robin
+      # DQN example:
+      # - LB_ALGORITHM=dqn
+      # Adaptive baselines:
+      # - LB_ALGORITHM=ema
+      # - LB_ALGORITHM=least_request
+      # - EMA_ALPHA=0.2
+      # - METRICS_SOURCE=prometheus
+      # - DQN_WEIGHT_TOTAL=1000
+      # - PROMETHEUS_URL=http://file-farm-prometheus:9090
       - CLUSTER_NAME=grpc_backend
       - METRICS_PORT=9093
       - BACKEND_WEIGHTS=100,100,100
