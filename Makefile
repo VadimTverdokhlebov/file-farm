@@ -2,28 +2,29 @@ help:
 	@echo ""
 	@echo "Setup:"
 	@echo "  make init             - Install npm dependencies for server and client"
-	@echo "  make env-dev          - Copy development .env files from examples"
-	@echo "  make env-prod         - Copy production .env files from examples"
+	@echo "  make build-env-dev          - Copy development .env files from examples"
+	@echo "  make build-env-prod         - Copy production .env files from examples"
 	@echo ""
 	@echo "Build:"
 	@echo "  make build            - Build all services"
 	@echo "  make build-server     - Build server only"
 	@echo "  make build-client     - Build client only"
-	@echo "  make build-envoy      - Build envoy only"
-	@echo "  make build-postgres   - Build postgres only"
+	@echo "  make build-load-stand - Build load testing stand only"
+	@echo "  make build-lb-controller - Build load balancer controller only"
 	@echo "  make rebuild          - Rebuild all services (no cache)"
 	@echo ""
 	@echo "Run:"
+	@echo "  make dev              - Prepare dev env, start infra, and run local services"
+	@echo "  make prod             - Prepare prod env, build images, and start containers"
 	@echo "  make up               - Start all services"
 	@echo "  make up-server        - Start server only"
 	@echo "  make up-client        - Start client only"
-	@echo "  make up-envoy         - Start lb-controller and envoy"
+	@echo "  make up-envoy         - Start envoy only"
 	@echo "  make up-lb-controller - Start load balancer controller only"
 	@echo "  make up-postgres      - Start postgres only"
 	@echo "  make up-prometheus    - Start prometheus only"
 	@echo "  make up-grafana       - Start grafana only"
 	@echo "  make up-cadvisor      - Start cadvisor only"
-	@echo "  make up-monitoring    - Start prometheus, grafana and cadvisor"
 	@echo "  make up-load-stand    - Start load testing stand"
 	@echo "  make down             - Stop all services"
 	@echo "  make down-server      - Stop server only"
@@ -60,26 +61,37 @@ init:
 	@echo ""
 	@cd client && npm ci
 	@echo ""
-	@echo "Initialization complete!"
+	@echo "Initializing load-stand..."
 	@echo ""
+	@cd load-stand && go mod tidy
+	@echo ""
+	@echo "Initializing lb-controller..."
+	@echo ""
+	@cd lb-controller && pip install -r requirements.txt
+	@echo ""
+	@echo "Initialization complete!"
 	
-env-dev:
+build-env-dev:
 	@echo ""
 	@echo "Initializing environment..."
 	@echo ""
 	cp ./postgres/.env.development.example ./postgres/.env
 	cp ./client/.env.development.example ./client/.env
 	cp ./server/.env.development.example ./server/.env
+	cp ./load-stand/.env.development.example ./load-stand/.env
+	cp ./lb-controller/.env.development.example ./lb-controller/.env
 	@echo ""
 	@echo "Initialization complete!"
 
-env-prod:
+build-env-prod:
 	@echo ""
 	@echo "Initializing environment..."
 	@echo ""
 	cp ./postgres/.env.production.example ./postgres/.env
 	cp ./client/.env.production.example ./client/.env
 	cp ./server/.env.production.example ./server/.env
+	cp ./load-stand/.env.production.example ./load-stand/.env
+	cp ./lb-controller/.env.production.example ./lb-controller/.env
 	@echo ""
 	@echo "Initialization complete!"
 
@@ -87,16 +99,19 @@ up-server:
 	@cd server && docker-compose up -d
 
 up-client:
-	@cd client && docker-compose down --remove-orphans 2>/dev/null || true
+	@cd client && docker-compose down
 	@cd client && docker-compose up -d
 
 up-lb-controller:
-	@cd lb-controller && docker-compose down --remove-orphans 2>/dev/null || true
+	@cd lb-controller && docker-compose down
 	@cd lb-controller && docker-compose up -d --build
 
+up-load-stand:
+	@cd load-stand && docker-compose down
+	@cd load-stand && docker-compose up -d --build
+
 up-envoy:
-	@make up-lb-controller
-	@cd envoy && docker-compose down --remove-orphans 2>/dev/null || true
+	@cd envoy && docker-compose down
 	@cd envoy && docker-compose up -d
 
 up-postgres:
@@ -112,21 +127,16 @@ up-grafana:
 up-cadvisor:
 	@cd cadvisor && docker-compose up -d
 
-up-monitoring:
-	@make up-prometheus
-	@make up-cadvisor
-	@make up-grafana
-
-up-load-stand:
-	@cd load-stand && docker-compose down --remove-orphans 2>/dev/null || true
-	@cd load-stand && docker-compose up -d --build
-
 up:
 	@make up-postgres
 	@make up-server
+	@make up-lb-controller
 	@make up-envoy
 	@make up-client
-	@make up-monitoring
+	@make up-load-stand
+	@make up-prometheus
+	@make up-cadvisor
+	@make up-grafana
 
 build-server:
 	@cd server && docker-compose build
@@ -134,23 +144,23 @@ build-server:
 build-client:
 	@cd client && docker-compose build
 
-build-envoy:
-	@cd envoy && docker-compose build
+build-load-stand:
+	@cd load-stand && docker-compose build
 
-build-postgres:
-	@cd postgres && docker-compose build
+build-lb-controller:
+	@cd lb-controller && docker-compose build
 
 build:
 	@make build-server
 	@make build-client
-	@make build-envoy
-	@make build-postgres
+	@make build-load-stand
+	@make build-lb-controller
 
 rebuild:
 	@cd server && docker-compose build --no-cache
 	@cd client && docker-compose build --no-cache
-	@cd envoy && docker-compose build --no-cache
-	@cd postgres && docker-compose build --no-cache
+	@cd load-stand && docker-compose build --no-cache
+	@cd lb-controller && docker-compose build --no-cache
 
 down-server:
 	@cd server && docker-compose down
@@ -160,6 +170,9 @@ down-client:
 
 down-lb-controller:
 	@cd lb-controller && docker-compose down
+
+down-load-stand:
+	@cd load-stand && docker-compose down
 
 down-envoy:
 	@cd envoy && docker-compose down
@@ -177,33 +190,34 @@ down-grafana:
 down-cadvisor:
 	@cd cadvisor && docker-compose down
 
-down-load-stand:
-	@cd load-stand && docker-compose down
 
 down:
 	@make down-server
 	@make down-client
+	@make down-load-stand
 	@make down-envoy
 	@make down-postgres
 	@make down-prometheus
 	@make down-grafana
 	@make down-cadvisor
-	@make down-load-stand
 
 logs-server:
 	@cd server && docker-compose logs -f
+
+logs-client:
+	@cd client && docker-compose logs -f
+
+logs-lb-controller:
+	@cd lb-controller && docker-compose logs -f
+
+logs-load-stand:
+	@cd load-stand && docker-compose logs -f
 
 logs-postgres:
 	@cd postgres && docker-compose logs -f
 
 logs-envoy:
 	@cd envoy && docker-compose logs -f
-
-logs-lb-controller:
-	@cd lb-controller && docker-compose logs -f
-
-logs-client:
-	@cd client && docker-compose logs -f
 
 logs-prometheus:
 	@cd prometheus && docker-compose logs -f
@@ -213,9 +227,6 @@ logs-grafana:
 
 logs-cadvisor:
 	@cd cadvisor && docker-compose logs -f
-
-logs-load-stand:
-	@cd load-stand && docker-compose logs -f
 
 clean:
 	@cd server && docker-compose down -v

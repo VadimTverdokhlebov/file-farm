@@ -2,7 +2,16 @@ import logging
 import time
 
 from balancers import create_balancer
-from config import BACKEND_WEIGHTS, BACKENDS, CLUSTER_NAME, EDS_PATH, LB_ALGORITHM, METRICS_PORT, UPDATE_INTERVAL_SEC
+from config import (
+    BACKEND_WEIGHTS,
+    BACKENDS,
+    CLUSTER_NAME,
+    EDS_PATH,
+    LB_ALGORITHM,
+    METRICS_PORT,
+    RESOLVE_BACKEND_HOSTS,
+    UPDATE_INTERVAL_SEC,
+)
 from envoy.eds_writer import write_eds_file
 from metrics import set_algorithm, set_endpoint_weights, start_metrics_server
 
@@ -18,18 +27,19 @@ def main() -> None:
     set_algorithm(LB_ALGORITHM)
     balancer = create_balancer(LB_ALGORITHM, BACKENDS, backend_weights=BACKEND_WEIGHTS)
     logger.info(
-        "Starting lb-controller algorithm=%s cluster=%s interval=%ss eds=%s metrics_port=%s",
+        "Starting lb-controller algorithm=%s cluster=%s interval=%ss eds=%s metrics_port=%s resolve_hosts=%s",
         LB_ALGORITHM,
         CLUSTER_NAME,
         UPDATE_INTERVAL_SEC,
         EDS_PATH,
         METRICS_PORT,
+        RESOLVE_BACKEND_HOSTS,
     )
 
     while True:
         decision = balancer.select()
         set_endpoint_weights(decision.weights)
-        write_eds_file(EDS_PATH, BACKENDS, decision.weights)
+        write_eds_file(EDS_PATH, BACKENDS, decision.weights, resolve_hosts=RESOLVE_BACKEND_HOSTS)
         logger.info("Updated EDS weights: %s", decision.weights)
         time.sleep(UPDATE_INTERVAL_SEC)
 

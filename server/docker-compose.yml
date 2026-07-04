@@ -4,6 +4,7 @@ x-server-common: &server-common
   build:
     context: ..
     dockerfile: server/Dockerfile
+  image: file-farm-server:latest
   env_file:
     - .env
   environment:

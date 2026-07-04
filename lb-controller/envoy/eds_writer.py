@@ -12,7 +12,12 @@ def resolve_host_ip(host: str) -> str:
     return socket.getaddrinfo(host, None, socket.AF_INET)[0][4][0]
 
 
-def build_cluster_load_assignment(backends: tuple[Backend, ...], weights: dict[str, int]) -> dict:
+def build_cluster_load_assignment(
+    backends: tuple[Backend, ...],
+    weights: dict[str, int],
+    *,
+    resolve_hosts: bool = True,
+) -> dict:
     lb_endpoints = []
 
     for backend in backends:
@@ -20,12 +25,14 @@ def build_cluster_load_assignment(backends: tuple[Backend, ...], weights: dict[s
         if weight <= 0:
             continue
 
+        address = resolve_host_ip(backend.host) if resolve_hosts else backend.host
+
         lb_endpoints.append(
             {
                 "endpoint": {
                     "address": {
                         "socket_address": {
-                            "address": resolve_host_ip(backend.host),
+                            "address": address,
                             "port_value": backend.port,
                         }
                     }
@@ -49,8 +56,14 @@ def build_cluster_load_assignment(backends: tuple[Backend, ...], weights: dict[s
     }
 
 
-def write_eds_file(path: str, backends: tuple[Backend, ...], weights: dict[str, int]) -> None:
-    payload = build_cluster_load_assignment(backends, weights)
+def write_eds_file(
+    path: str,
+    backends: tuple[Backend, ...],
+    weights: dict[str, int],
+    *,
+    resolve_hosts: bool = True,
+) -> None:
+    payload = build_cluster_load_assignment(backends, weights, resolve_hosts=resolve_hosts)
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
 

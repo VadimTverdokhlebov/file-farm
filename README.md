@@ -1,34 +1,4 @@
-## Install Environment Development Mode
-
-```bash
-make env-dev
-```
-
-```bash
-make init
-```
-
-### Start Services
-
-```bash
-make up-postgres
-```
-
-```bash
-make up-envoy
-```
-
-### Start Client and Server
-
-```bash
-cd server && npm run dev
-```
-
-```bash
-cd client && npm run dev
-```
-
-### How Generate Proto Files
+## How Generate Proto Files
 
 ```bash
 cd server && npm run gen:proto
@@ -37,10 +7,67 @@ cd server && npm run gen:proto
 ```bash
 cd client && npm run gen:proto
 ```
-## Install Environment Production Mode
+
+## How run to Development Mode
+
+### Install Environment
 
 ```bash
-make env-prod
+make build-env-dev
+```
+
+### Install Dependencies
+
+```bash
+make init
+```
+
+### Start Infra
+
+```bash
+make up-postgres
+```
+
+```bash
+make up-prometheus
+```
+
+```bash
+make up-cadvisor
+```
+
+```bash
+make up-grafana
+```
+
+```bash
+make up-envoy
+```
+
+### Start Services
+
+```bash
+cd server && npm run dev
+```
+
+```bash
+cd lb-controller && python3 main.py
+```
+
+```bash
+cd load-stand && go run .
+```
+
+```bash
+cd client && npm run dev
+```
+
+## How run to Production Mode
+
+### Install Environment
+
+```bash
+make build-env-prod
 ```
 
 ### Start Services

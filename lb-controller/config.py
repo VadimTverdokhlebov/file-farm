@@ -1,6 +1,11 @@
 import os
 from dataclasses import dataclass
 
+from dotenv import load_dotenv
+
+
+load_dotenv()
+
 
 @dataclass(frozen=True)
 class Backend:
@@ -9,17 +14,46 @@ class Backend:
     port: int
 
 
-BACKENDS = (
+DEFAULT_BACKENDS = (
     Backend(name="server-1", host="file-farm-server-1", port=50051),
     Backend(name="server-2", host="file-farm-server-2", port=50051),
     Backend(name="server-3", host="file-farm-server-3", port=50051),
 )
 
+
+def _parse_backends(raw: str) -> tuple[Backend, ...]:
+    backends: list[Backend] = []
+    for index, item in enumerate(part.strip() for part in raw.split(",") if part.strip()):
+        fields = [field.strip() for field in item.split(":")]
+        if len(fields) == 2:
+            name = f"server-{index + 1}"
+            host, port = fields
+        elif len(fields) == 3:
+            name, host, port = fields
+        else:
+            raise ValueError(
+                "BACKENDS must be comma-separated entries in host:port or name:host:port format"
+            )
+        backends.append(Backend(name=name, host=host, port=int(port)))
+
+    if not backends:
+        raise ValueError("BACKENDS must contain at least one backend")
+    return tuple(backends)
+
+
+def _parse_bool(raw: str, *, default: bool) -> bool:
+    if raw == "":
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+BACKENDS = _parse_backends(os.environ["BACKENDS"]) if os.environ.get("BACKENDS") else DEFAULT_BACKENDS
 CLUSTER_NAME = os.environ.get("CLUSTER_NAME", "grpc_backend")
 EDS_PATH = os.environ.get("EDS_PATH", "/etc/envoy/dynamic/endpoints.yaml")
 UPDATE_INTERVAL_SEC = float(os.environ.get("UPDATE_INTERVAL_SEC", "1"))
 LB_ALGORITHM = os.environ.get("LB_ALGORITHM", "round_robin")
 METRICS_PORT = int(os.environ.get("METRICS_PORT", "9093"))
+RESOLVE_BACKEND_HOSTS = _parse_bool(os.environ.get("RESOLVE_BACKEND_HOSTS", ""), default=True)
 
 # Comma-separated weights for server-1, server-2, server-3 (used by weighted_round_robin).
 BACKEND_WEIGHTS = os.environ.get("BACKEND_WEIGHTS", "100,100,100")
