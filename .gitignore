@@ -1,10 +1,2 @@
 uploads/*
 !uploads/.gitkeep
-server/.env
-postgres/.env
-client/.env
-load-stand/.env
-lb-controller/.env
-envoy/dynamic/endpoints.yaml
-__pycache__/
-*.py[cod]

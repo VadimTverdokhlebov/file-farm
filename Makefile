@@ -67,7 +67,7 @@ init:
 	@echo ""
 	@echo "Initializing lb-controller..."
 	@echo ""
-	@cd lb-controller && pip install -r requirements.txt
+	@cd lb-controller && python3 -m venv venv && ./venv/bin/pip install -r requirements.txt
 	@echo ""
 	@echo "Initialization complete!"
 	
@@ -189,7 +189,6 @@ down-grafana:
 
 down-cadvisor:
 	@cd cadvisor && docker-compose down
-
 
 down:
 	@make down-server
