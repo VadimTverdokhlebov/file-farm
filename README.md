@@ -51,7 +51,7 @@ cd server && npm run dev
 ```
 
 ```bash
-cd lb-controller && python3 main.py
+cd lb-controller && source venv/bin/activate && python3 main.py
 ```
 
 ```bash
