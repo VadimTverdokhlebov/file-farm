@@ -1,3 +1,5 @@
+import math
+
 from config import Backend
 
 
@@ -43,6 +45,55 @@ def equal_eds_weights(backends: tuple[Backend, ...], *, weight_total: int) -> di
     for index, backend in enumerate(backends):
         weights[backend.host] = base + (1 if index < remainder else 0)
 
+    return weights
+
+
+def masked_logits_to_eds_weights(
+    backends: tuple[Backend, ...],
+    raw_logits: tuple[float, ...],
+    alive_mask: tuple[bool, ...],
+    *,
+    weight_total: int,
+) -> dict[str, int]:
+    if len(raw_logits) != len(backends) or len(alive_mask) != len(backends):
+        raise ValueError("Logits and health mask must match backend count")
+    if weight_total <= 0:
+        raise ValueError("weight_total must be positive")
+
+    active_indices = [index for index, is_alive in enumerate(alive_mask) if is_alive]
+    weights = {backend.host: 0 for backend in backends}
+    if not active_indices:
+        return weights
+    if weight_total < len(active_indices):
+        raise ValueError("weight_total must be at least the number of healthy backends")
+
+    finite_logits = [
+        float(raw_logits[index]) if math.isfinite(float(raw_logits[index])) else 0.0
+        for index in active_indices
+    ]
+    max_logit = max(finite_logits)
+    scores = [math.exp(max(-80.0, logit - max_logit)) for logit in finite_logits]
+    score_total = sum(scores)
+    shares = [score / score_total * weight_total for score in scores]
+    active_weights = [max(1, int(share)) for share in shares]
+
+    while sum(active_weights) > weight_total:
+        index = max(
+            (i for i, weight in enumerate(active_weights) if weight > 1),
+            key=lambda i: active_weights[i] - shares[i],
+        )
+        active_weights[index] -= 1
+
+    remainders = sorted(
+        range(len(shares)),
+        key=lambda i: shares[i] - int(shares[i]),
+        reverse=True,
+    )
+    for index in range(weight_total - sum(active_weights)):
+        active_weights[remainders[index % len(remainders)]] += 1
+
+    for index, weight in zip(active_indices, active_weights):
+        weights[backends[index].host] = weight
     return weights
 
 

@@ -41,16 +41,13 @@ def build_cluster_load_assignment(
             }
         )
 
-    if not lb_endpoints:
-        raise ValueError("At least one endpoint must have positive weight")
-
     return {
         "version_info": "lb-controller",
         "resources": [
             {
                 "@type": "type.googleapis.com/envoy.config.endpoint.v3.ClusterLoadAssignment",
                 "cluster_name": CLUSTER_NAME,
-                "endpoints": [{"lb_endpoints": lb_endpoints}],
+                "endpoints": [{"lb_endpoints": lb_endpoints}] if lb_endpoints else [],
             }
         ],
     }

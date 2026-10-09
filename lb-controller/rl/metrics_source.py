@@ -62,6 +62,7 @@ class StubMetricsSource(MetricsSource):
                     memory_limit_bytes=self._memory_limits_bytes[index],
                     is_healthy=True,
                     current_weight_share=weight / weight_total,
+                    disk_io_bytes_per_second=1_000_000.0 * (index + 1),
                 )
             )
 
@@ -72,4 +73,8 @@ class StubMetricsSource(MetricsSource):
             cluster_request_rate_rps=cluster_rps,
             step_index=self._step_index,
             timestamp_unix=time.time(),
+            cluster_latency_p99_seconds=max(
+                (server.latency_p99_seconds for server in servers),
+                default=0.0,
+            ),
         )

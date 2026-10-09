@@ -21,6 +21,7 @@ Model output (ModelAction):
     weights: dict[host, int]       # Envoy EDS load_balancing_weight, sum ~= WEIGHT_TOTAL
 """
 
+import math
 from dataclasses import dataclass
 
 
@@ -39,6 +40,7 @@ class ServerState:
     memory_limit_bytes: float
     is_healthy: bool
     current_weight_share: float
+    disk_io_bytes_per_second: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -47,6 +49,7 @@ class ClusterState:
     cluster_request_rate_rps: float
     step_index: int
     timestamp_unix: float
+    cluster_latency_p99_seconds: float = 0.0
 
     @property
     def dimension(self) -> int:
@@ -73,6 +76,37 @@ class ClusterState:
             )
         features.append(self.cluster_request_rate_rps)
         return features
+
+    def to_am_ppo_feature_vector(self) -> list[float]:
+        max_cpu_limit = max((server.cpu_limit_cores for server in self.servers), default=1.0)
+        max_cpu_limit = max(max_cpu_limit, 1e-6)
+        features: list[float] = []
+
+        for server in self.servers:
+            features.extend(
+                [
+                    _clamp(server.cpu_utilization),
+                    _log_scale(server.disk_io_bytes_per_second, 50_000_000.0),
+                    _log_scale(server.request_rate_rps, 100.0),
+                    _log_scale(server.active_requests, 100.0),
+                    1.0 if server.is_healthy else 0.0,
+                    _clamp(server.cpu_limit_cores / max_cpu_limit),
+                ]
+            )
+
+        return features
+
+
+def _clamp(value: float) -> float:
+    if not math.isfinite(value):
+        return 0.0
+    return min(max(value, 0.0), 1.0)
+
+
+def _log_scale(value: float, scale: float) -> float:
+    if not math.isfinite(value) or value <= 0.0:
+        return 0.0
+    return min(math.log1p(value) / math.log1p(scale), 1.0)
 
 
 @dataclass(frozen=True)

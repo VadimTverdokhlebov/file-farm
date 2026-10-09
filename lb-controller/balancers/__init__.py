@@ -1,4 +1,5 @@
 from balancers.base import Balancer, LoadDecision
+from balancers.am_ppo_balancer import AMPPOBalancer
 from balancers.dqn_balancer import DqnBalancer
 from balancers.ema_balancer import EmaBalancer
 from balancers.factory import create_metrics_source, parse_capacity_lists
@@ -9,6 +10,7 @@ from config import DQN_EPSILON, DQN_MODEL_PATH, DQN_WEIGHT_TOTAL, EMA_ALPHA
 
 __all__ = [
     "Balancer",
+    "AMPPOBalancer",
     "DqnBalancer",
     "EmaBalancer",
     "LeastRequestBalancer",
@@ -51,6 +53,13 @@ def create_balancer(algorithm: str, backends, *, backend_weights: str = "100,100
             model_path=DQN_MODEL_PATH or None,
             cpu_limits=cpu_limits,
             memory_limits_bytes=memory_limits_bytes,
+        )
+
+    if algorithm == "am_ppo":
+        return AMPPOBalancer(
+            backends,
+            metrics_source=create_metrics_source(backends),
+            weight_total=DQN_WEIGHT_TOTAL,
         )
 
     raise ValueError(f"Unsupported LB algorithm: {algorithm}")

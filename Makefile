@@ -26,7 +26,7 @@ help:
 	@echo "  make up-grafana       - Start grafana only"
 	@echo "  make up-cadvisor      - Start cadvisor only"
 	@echo "  make up-load-stand    - Start load testing stand"
-	@echo "  make down             - Stop all services"
+	@echo "  make down             - Stop services and permanently clear PostgreSQL data and uploads"
 	@echo "  make down-server      - Stop server only"
 	@echo "  make down-client      - Stop client only"
 	@echo "  make down-envoy       - Stop envoy and lb-controller"
@@ -195,10 +195,12 @@ down:
 	@make down-client
 	@make down-load-stand
 	@make down-envoy
-	@make down-postgres
+	@echo "Deleting PostgreSQL data volume and uploads contents..."
+	@cd postgres && docker-compose down -v
 	@make down-prometheus
 	@make down-grafana
 	@make down-cadvisor
+	@find uploads -mindepth 1 -maxdepth 1 ! -name .gitignore -exec rm -rf -- {} +
 
 logs-server:
 	@cd server && docker-compose logs -f
