@@ -2,6 +2,17 @@ export interface TestStats {
   successfulRequests: number;
   failedRequests: number;
   endpointStats?: Record<string, EndpointStat>;
+  report?: TestMetrics | null;
+}
+
+export interface TestMetrics {
+  rps: number;
+  p50Millis: number;
+  p99Millis: number;
+  errorRatePercent: number;
+  jainIndex: number;
+  jainAvailable: boolean;
+  durationSeconds: number;
 }
 
 export interface EndpointStat {

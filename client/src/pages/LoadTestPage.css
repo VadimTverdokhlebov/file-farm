@@ -124,6 +124,42 @@ button:disabled {
     background-color: #f0f0f0;
 }
 
+.completion-report {
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid #ddd;
+}
+
+.completion-report h3 {
+    margin: 0 0 12px;
+}
+
+.report-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 12px;
+}
+
+.report-metric {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+.report-metric span {
+    color: #555;
+    font-size: 13px;
+}
+
+.report-metric strong {
+    font-size: 20px;
+    font-variant-numeric: tabular-nums;
+}
+
 .error {
     color: red;
     font-weight: bold;

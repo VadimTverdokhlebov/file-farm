@@ -31,7 +31,7 @@ export const useLoadTest = (): UseLoadTestReturn => {
   const [presets, setPresets] = useState<LoadPreset[]>([]);
   const [status, setStatus] = useState<TestStatus>({
     isRunning: false,
-    stats: { successfulRequests: 0, failedRequests: 0 },
+    stats: { successfulRequests: 0, failedRequests: 0, report: null },
   });
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -74,6 +74,7 @@ export const useLoadTest = (): UseLoadTestReturn => {
               successfulRequests: Number(payload.stats.successfulRequests) || 0,
               failedRequests: Number(payload.stats.failedRequests) || 0,
               endpointStats: payload.stats.endpointStats || {},
+              report: payload.stats.report || null,
             },
           });
         } else if (message.type === 'error') {

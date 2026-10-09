@@ -30,7 +30,7 @@ func withCORS(next http.Handler) http.Handler {
 func main() {
 	cfg := config.New()
 
-	loadEngine, err := engine.NewEngine(cfg.GrpcTarget, cfg.ProtoDir)
+	loadEngine, err := engine.NewEngine(cfg.GrpcTarget, cfg.ProtoDir, cfg.EnvoyAdminURL)
 	if err != nil {
 		log.Fatalf("Failed to start load engine: %v", err)
 	}

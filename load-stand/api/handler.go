@@ -28,9 +28,10 @@ type wsCommand struct {
 }
 
 type jsonStats struct {
-	SuccessfulRequests int64                              `json:"successfulRequests"`
-	FailedRequests     int64                              `json:"failedRequests"`
-	EndpointStats      map[string]map[string]int64        `json:"endpointStats,omitempty"`
+	SuccessfulRequests int64                       `json:"successfulRequests"`
+	FailedRequests     int64                       `json:"failedRequests"`
+	EndpointStats      map[string]map[string]int64 `json:"endpointStats,omitempty"`
+	Report             *engine.TestMetrics         `json:"report,omitempty"`
 }
 
 func (h *Handler) HandleEndpoints(w http.ResponseWriter, r *http.Request) {
@@ -67,9 +68,10 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 					"payload": map[string]interface{}{
 						"isRunning": isRunning,
 						"stats": jsonStats{
-							SuccessfulRequests: stats.SuccessfulRequests.Load(),
-							FailedRequests:     stats.FailedRequests.Load(),
-							EndpointStats:      stats.SnapshotEndpointStats(),
+							SuccessfulRequests: stats.SuccessfulRequests,
+							FailedRequests:     stats.FailedRequests,
+							EndpointStats:      stats.EndpointStats,
+							Report:             stats.Report,
 						},
 					},
 				}); err != nil {

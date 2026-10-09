@@ -18,8 +18,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/status"
 	rpb "google.golang.org/grpc/reflection/grpc_reflection_v1alpha"
+	"google.golang.org/grpc/status"
 
 	"load-stand/metrics"
 )
@@ -35,6 +35,16 @@ type Stats struct {
 	SuccessfulRequests atomic.Int64
 	FailedRequests     atomic.Int64
 	EndpointStats      map[string]*EndpointStats
+	endpointStatsMu    sync.RWMutex
+	latencyBuckets     []atomic.Int64
+	Report             *TestMetrics
+}
+
+type StatusSnapshot struct {
+	SuccessfulRequests int64
+	FailedRequests     int64
+	EndpointStats      map[string]map[string]int64
+	Report             *TestMetrics
 }
 
 type TestConfig struct {
@@ -55,9 +65,12 @@ type Engine struct {
 	target           string
 	conn             *grpc.ClientConn
 	stub             grpcdynamic.Stub
+	envoyAdminURL    string
+	testStartedAt    time.Time
+	backendCounters  map[string]envoyEndpointCounters
 }
 
-func NewEngine(target string, protoDir string) (*Engine, error) {
+func NewEngine(target string, protoDir string, envoyAdminURL string) (*Engine, error) {
 	endpoints, err := ParseProtoFiles(protoDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize engine: %w", err)
@@ -80,8 +93,10 @@ func NewEngine(target string, protoDir string) (*Engine, error) {
 		availableMethods: endpoints,
 		conn:             conn,
 		stub:             grpcdynamic.NewStub(conn),
+		envoyAdminURL:    envoyAdminURL,
 		stats: Stats{
-			EndpointStats: make(map[string]*EndpointStats),
+			EndpointStats:  make(map[string]*EndpointStats),
+			latencyBuckets: make([]atomic.Int64, len(latencyBucketBounds)+1),
 		},
 	}, nil
 }
@@ -90,13 +105,20 @@ func (e *Engine) GetAvailableMethods() []string {
 	return e.availableMethods
 }
 
-func (e *Engine) GetStatus() (bool, *Stats) {
+func (e *Engine) GetStatus() (bool, StatusSnapshot) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.isRunning, &e.stats
+	return e.isRunning, StatusSnapshot{
+		SuccessfulRequests: e.stats.SuccessfulRequests.Load(),
+		FailedRequests:     e.stats.FailedRequests.Load(),
+		EndpointStats:      e.stats.SnapshotEndpointStats(),
+		Report:             e.stats.Report,
+	}
 }
 
 func (e *Engine) getEndpointStats(endpoint string) *EndpointStats {
+	e.stats.endpointStatsMu.Lock()
+	defer e.stats.endpointStatsMu.Unlock()
 	if stats, ok := e.stats.EndpointStats[endpoint]; ok {
 		return stats
 	}
@@ -105,15 +127,28 @@ func (e *Engine) getEndpointStats(endpoint string) *EndpointStats {
 	return stats
 }
 
-func (e *Engine) recordResult(endpoint string, success bool) {
+func (e *Engine) recordResult(endpoint string, success bool, latency time.Duration) {
 	metrics.RecordRequest(endpoint, success)
+	e.stats.latencyBuckets[latencyBucketIndex(latency)].Add(1)
+	endpointStats := e.getEndpointStats(endpoint)
 	if success {
 		e.stats.SuccessfulRequests.Add(1)
-		e.getEndpointStats(endpoint).SuccessfulRequests.Add(1)
+		endpointStats.SuccessfulRequests.Add(1)
 		return
 	}
 	e.stats.FailedRequests.Add(1)
-	e.getEndpointStats(endpoint).FailedRequests.Add(1)
+	endpointStats.FailedRequests.Add(1)
+}
+
+func (e *Engine) resetLoadStats() {
+	e.stats.SuccessfulRequests.Store(0)
+	e.stats.FailedRequests.Store(0)
+	e.stats.endpointStatsMu.Lock()
+	e.stats.EndpointStats = make(map[string]*EndpointStats)
+	e.stats.endpointStatsMu.Unlock()
+	for index := range e.stats.latencyBuckets {
+		e.stats.latencyBuckets[index].Store(0)
+	}
 }
 
 func isStopError(ctx context.Context, err error) bool {
@@ -144,7 +179,13 @@ func (e *Engine) StartTest(rawConfig TestConfig) error {
 	e.isRunning = true
 	e.stats.SuccessfulRequests.Store(0)
 	e.stats.FailedRequests.Store(0)
+	e.stats.endpointStatsMu.Lock()
 	e.stats.EndpointStats = make(map[string]*EndpointStats)
+	e.stats.endpointStatsMu.Unlock()
+	for index := range e.stats.latencyBuckets {
+		e.stats.latencyBuckets[index].Store(0)
+	}
+	e.stats.Report = nil
 
 	ctx, cancel := context.WithCancel(context.Background())
 	e.cancelFunc = cancel
@@ -168,7 +209,7 @@ func (e *Engine) StartTest(rawConfig TestConfig) error {
 
 	methodDescriptors, err := e.resolveMethodDescriptors(ctx, config.Endpoints)
 	if err != nil {
-		e.StopTest()
+		e.abortTest()
 		return err
 	}
 
@@ -176,6 +217,14 @@ func (e *Engine) StartTest(rawConfig TestConfig) error {
 	if err := e.runWarmup(ctx, methodDescriptors, config, builder); err != nil {
 		log.Printf("Warmup warning: %v", err)
 	}
+	e.resetLoadStats()
+	e.backendCounters = nil
+	if counters, err := fetchEnvoyEndpointCounters(e.envoyAdminURL); err != nil {
+		log.Printf("Envoy endpoint counters unavailable; Jain index will be omitted: %v", err)
+	} else {
+		e.backendCounters = counters
+	}
+	e.testStartedAt = time.Now()
 
 	var wg sync.WaitGroup
 	for i := 0; i < config.Concurrency; i++ {
@@ -188,20 +237,20 @@ func (e *Engine) StartTest(rawConfig TestConfig) error {
 
 	if config.Duration > 0 {
 		go func() {
-			time.Sleep(time.Duration(config.Duration) * time.Second)
-			log.Println("Test duration expired, stopping...")
-			e.StopTest()
+			timer := time.NewTimer(time.Duration(config.Duration) * time.Second)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+				log.Println("Test duration expired, stopping...")
+				e.StopTest()
+			case <-ctx.Done():
+			}
 		}()
 	}
 
 	go func() {
 		wg.Wait()
-		e.mu.Lock()
-		if e.isRunning {
-			e.isRunning = false
-			log.Println("All virtual users finished")
-		}
-		e.mu.Unlock()
+		e.finishTest()
 	}()
 
 	return nil
@@ -249,6 +298,7 @@ func (e *Engine) runWarmup(ctx context.Context, methods map[string]*desc.MethodD
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			startedAt := time.Now()
 			req := dynamic.NewMessage(uploadMD.GetInputType())
 			if err := builder.Populate(uploadMD, req); err != nil {
 				return err
@@ -258,12 +308,12 @@ func (e *Engine) runWarmup(ctx context.Context, methods map[string]*desc.MethodD
 				if isStopError(ctx, err) {
 					return ctx.Err()
 				}
-				e.recordResult(UploadFileRPC, false)
+				e.recordResult(UploadFileRPC, false, time.Since(startedAt))
 				continue
 			}
 			_ = resp
 			builder.HandleResponse(uploadMD, req)
-			e.recordResult(UploadFileRPC, true)
+			e.recordResult(UploadFileRPC, true, time.Since(startedAt))
 		}
 		return nil
 	}
@@ -281,10 +331,58 @@ func (e *Engine) StopTest() {
 	if e.cancelFunc != nil {
 		e.cancelFunc()
 	}
+	e.mu.Unlock()
+	log.Println("Stopping test and waiting for virtual users")
+}
+
+func (e *Engine) abortTest() {
+	e.mu.Lock()
+	if e.cancelFunc != nil {
+		e.cancelFunc()
+	}
 	e.isRunning = false
+	e.cancelFunc = nil
 	e.mu.Unlock()
 	metrics.SetTestStopped()
-	log.Println("Test stopped")
+}
+
+func (e *Engine) finishTest() {
+	duration := time.Since(e.testStartedAt)
+	var after map[string]envoyEndpointCounters
+	if counters, err := fetchEnvoyEndpointCounters(e.envoyAdminURL); err != nil {
+		log.Printf("Envoy endpoint counters unavailable; Jain index will be omitted: %v", err)
+	} else {
+		after = counters
+	}
+
+	latencyBuckets := make([]int64, len(e.stats.latencyBuckets))
+	for index := range e.stats.latencyBuckets {
+		latencyBuckets[index] = e.stats.latencyBuckets[index].Load()
+	}
+	report := summarizeTest(
+		e.stats.SuccessfulRequests.Load(),
+		e.stats.FailedRequests.Load(),
+		latencyBuckets,
+		duration,
+		e.backendCounters,
+		after,
+	)
+
+	e.mu.Lock()
+	e.stats.Report = &report
+	e.isRunning = false
+	e.cancelFunc = nil
+	e.mu.Unlock()
+	metrics.SetTestStopped()
+	log.Printf(
+		"Test completed: RPS=%.2f p50=%.2fms p99=%.2fms errors=%.2f%% Jain=%.4f (available=%t)",
+		report.RPS,
+		report.P50Millis,
+		report.P99Millis,
+		report.ErrorRatePercent,
+		report.JainIndex,
+		report.JainAvailable,
+	)
 }
 
 func (e *Engine) runVirtualUser(ctx context.Context, methodDescriptors map[string]*desc.MethodDescriptor, builder *PayloadBuilder) {
@@ -298,6 +396,7 @@ func (e *Engine) runVirtualUser(ctx context.Context, methodDescriptors map[strin
 		case <-ctx.Done():
 			return
 		default:
+			startedAt := time.Now()
 			endpoint := endpoints[rand.Intn(len(endpoints))]
 			md := methodDescriptors[endpoint]
 			inputMsg := dynamic.NewMessage(md.GetInputType())
@@ -306,7 +405,7 @@ func (e *Engine) runVirtualUser(ctx context.Context, methodDescriptors map[strin
 				if ctx.Err() != nil {
 					return
 				}
-				e.recordResult(endpoint, false)
+				e.recordResult(endpoint, false, time.Since(startedAt))
 				continue
 			}
 
@@ -315,18 +414,20 @@ func (e *Engine) runVirtualUser(ctx context.Context, methodDescriptors map[strin
 				if isStopError(ctx, err) {
 					return
 				}
-				e.recordResult(endpoint, false)
+				e.recordResult(endpoint, false, time.Since(startedAt))
 				continue
 			}
 
 			_ = resp
 			builder.HandleResponse(md, inputMsg)
-			e.recordResult(endpoint, true)
+			e.recordResult(endpoint, true, time.Since(startedAt))
 		}
 	}
 }
 
 func (s *Stats) SnapshotEndpointStats() map[string]map[string]int64 {
+	s.endpointStatsMu.RLock()
+	defer s.endpointStatsMu.RUnlock()
 	result := make(map[string]map[string]int64)
 	for endpoint, stats := range s.EndpointStats {
 		result[endpoint] = map[string]int64{

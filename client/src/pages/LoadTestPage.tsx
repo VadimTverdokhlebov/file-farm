@@ -162,6 +162,38 @@ export const LoadTestPage = () => {
           <p>Failed requests: <span>{status.stats.failedRequests || 0}</span></p>
         </div>
 
+        {!status.isRunning && status.stats.report && (
+          <section className="completion-report" aria-live="polite">
+            <h3>Test report</h3>
+            <div className="report-grid">
+              <div className="report-metric">
+                <span>RPS ↑</span>
+                <strong>{status.stats.report.rps.toFixed(2)}</strong>
+              </div>
+              <div className="report-metric">
+                <span>p50, мс ↓</span>
+                <strong>{status.stats.report.p50Millis.toFixed(2)}</strong>
+              </div>
+              <div className="report-metric">
+                <span>p99, мс ↓</span>
+                <strong>{status.stats.report.p99Millis.toFixed(2)}</strong>
+              </div>
+              <div className="report-metric">
+                <span>Ошибки, % ↓</span>
+                <strong>{status.stats.report.errorRatePercent.toFixed(2)}%</strong>
+              </div>
+              <div className="report-metric">
+                <span>Jain</span>
+                <strong>
+                  {status.stats.report.jainAvailable
+                    ? status.stats.report.jainIndex.toFixed(3)
+                    : 'N/A'}
+                </strong>
+              </div>
+            </div>
+          </section>
+        )}
+
         {status.stats.endpointStats && Object.keys(status.stats.endpointStats).length > 0 && (
           <div className="endpoint-stats">
             <h3>Per endpoint</h3>

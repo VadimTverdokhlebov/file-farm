@@ -9,9 +9,10 @@ import (
 )
 
 type Config struct {
-	HttpPort   int
-	ProtoDir   string
-	GrpcTarget string
+	HttpPort      int
+	ProtoDir      string
+	GrpcTarget    string
+	EnvoyAdminURL string
 }
 
 func getEnv(key, fallback string) string {
@@ -28,8 +29,9 @@ func New() *Config {
 	protoDir, _ := filepath.Abs(getEnv("PROTO_DIR", "../protos"))
 
 	return &Config{
-		HttpPort:   port,
-		ProtoDir:   protoDir,
-		GrpcTarget: getEnv("TARGET_GRPC", "localhost:8080"),
+		HttpPort:      port,
+		ProtoDir:      protoDir,
+		GrpcTarget:    getEnv("TARGET_GRPC", "localhost:8080"),
+		EnvoyAdminURL: getEnv("ENVOY_ADMIN_URL", "http://localhost:9901"),
 	}
 }
