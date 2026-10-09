@@ -15,9 +15,12 @@ def logits_to_eds_weights(
     if weight_total <= 0:
         raise ValueError("weight_total must be positive")
 
-    positive = [max(float(logit), 0.0) for logit in raw_logits]
+    positive = [
+        max(float(logit), 0.0) if math.isfinite(float(logit)) else 0.0
+        for logit in raw_logits
+    ]
     if sum(positive) <= 0.0:
-        positive = [1.0] * len(backends)
+        return equal_eds_weights(backends, weight_total=weight_total)
 
     total_positive = sum(positive)
     weights: dict[str, int] = {}

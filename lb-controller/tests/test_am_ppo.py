@@ -9,7 +9,7 @@ from rl.am_ppo_model import AMPPORLModel
 from rl.metrics_source import StubMetricsSource
 from rl.prometheus_metrics_source import PrometheusMetricsSource
 from rl.types import ClusterState, ServerState
-from rl.weights import masked_logits_to_eds_weights
+from rl.weights import logits_to_eds_weights, masked_logits_to_eds_weights
 
 
 BACKENDS = (
@@ -98,6 +98,15 @@ class AMPPOTests(unittest.TestCase):
         )
 
         self.assertEqual(sum(weights.values()), 0)
+
+    def test_non_finite_scores_fall_back_to_equal_weights(self) -> None:
+        weights = logits_to_eds_weights(
+            BACKENDS,
+            (float("nan"), float("inf")),
+            weight_total=1000,
+        )
+
+        self.assertEqual(weights, {"server-1": 500, "server-2": 500})
 
     def test_empty_health_mask_produces_empty_eds_assignment(self) -> None:
         assignment = build_cluster_load_assignment(

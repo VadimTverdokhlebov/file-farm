@@ -68,6 +68,14 @@ input[type="number"] {
     border-radius: 4px;
 }
 
+select {
+    padding: 8px;
+    min-width: 220px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: white;
+}
+
 .endpoints-list {
     max-height: 200px;
     overflow-y: auto;

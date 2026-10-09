@@ -13,16 +13,24 @@ import (
 )
 
 type PayloadBuilder struct {
-	fileSizeKB      int
-	uploadCounter   atomic.Int64
-	userCounter     atomic.Int64
-	uploadedFiles   []string
-	createdLogins   []string
-	mu              sync.RWMutex
+	fileSizeMinKB int
+	fileSizeMaxKB int
+	uploadCounter atomic.Int64
+	userCounter   atomic.Int64
+	uploadedFiles []string
+	createdLogins []string
+	mu            sync.RWMutex
 }
 
-func NewPayloadBuilder(fileSizeKB int) *PayloadBuilder {
-	return &PayloadBuilder{fileSizeKB: fileSizeKB}
+func NewPayloadBuilder(fileSizeMinKB int, fileSizeMaxKB int) *PayloadBuilder {
+	return &PayloadBuilder{fileSizeMinKB: fileSizeMinKB, fileSizeMaxKB: fileSizeMaxKB}
+}
+
+func (b *PayloadBuilder) nextFileSizeKB() int {
+	if b.fileSizeMinKB >= b.fileSizeMaxKB {
+		return b.fileSizeMinKB
+	}
+	return b.fileSizeMinKB + mathrand.Intn(b.fileSizeMaxKB-b.fileSizeMinKB+1)
 }
 
 func (b *PayloadBuilder) RecordUploadedFile(filename string) {
@@ -77,7 +85,7 @@ func (b *PayloadBuilder) fillUpload(msg *dynamic.Message) error {
 	id := b.uploadCounter.Add(1)
 	filename := fmt.Sprintf("loadtest_%d.bin", id)
 
-	rawSize := b.fileSizeKB * 1024
+	rawSize := b.nextFileSizeKB() * 1024
 	if rawSize <= 0 {
 		rawSize = 256 * 1024
 	}

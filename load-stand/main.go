@@ -30,7 +30,7 @@ func withCORS(next http.Handler) http.Handler {
 func main() {
 	cfg := config.New()
 
-	loadEngine, err := engine.NewEngine(cfg.GrpcTarget, cfg.ProtoDir, cfg.EnvoyAdminURL)
+	loadEngine, err := engine.NewEngine(cfg.GrpcTarget, cfg.ProtoDir, cfg.EnvoyAdminURL, cfg.LoadBalancerURL)
 	if err != nil {
 		log.Fatalf("Failed to start load engine: %v", err)
 	}
@@ -40,6 +40,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/endpoints", apiHandler.HandleEndpoints)
 	mux.HandleFunc("/api/presets", apiHandler.HandlePresets)
+	mux.HandleFunc("/api/algorithms", apiHandler.HandleAlgorithms)
 	mux.HandleFunc("/ws", apiHandler.HandleWebSocket)
 	mux.Handle("/metrics", promhttp.Handler())
 

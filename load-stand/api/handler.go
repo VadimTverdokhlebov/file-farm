@@ -44,6 +44,16 @@ func (h *Handler) HandlePresets(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(engine.GetPresets())
 }
 
+func (h *Handler) HandleAlgorithms(w http.ResponseWriter, r *http.Request) {
+	configuration, err := h.engine.GetBalancerConfiguration(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(configuration)
+}
+
 func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {

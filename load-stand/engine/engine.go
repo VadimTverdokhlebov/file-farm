@@ -48,12 +48,15 @@ type StatusSnapshot struct {
 }
 
 type TestConfig struct {
-	Concurrency int      `json:"concurrency"`
-	Duration    int      `json:"duration"`
-	Endpoints   []string `json:"endpoints"`
-	Preset      string   `json:"preset"`
-	FileSizeKB  int      `json:"fileSizeKb"`
-	WarmupFiles int      `json:"warmupFiles"`
+	Concurrency   int      `json:"concurrency"`
+	Duration      int      `json:"duration"`
+	Endpoints     []string `json:"endpoints"`
+	Preset        string   `json:"preset"`
+	Algorithm     string   `json:"algorithm"`
+	FileSizeKB    int      `json:"fileSizeKb"`
+	FileSizeMinKB int      `json:"fileSizeMinKb"`
+	FileSizeMaxKB int      `json:"fileSizeMaxKb"`
+	WarmupFiles   int      `json:"warmupFiles"`
 }
 
 type Engine struct {
@@ -66,11 +69,12 @@ type Engine struct {
 	conn             *grpc.ClientConn
 	stub             grpcdynamic.Stub
 	envoyAdminURL    string
+	loadBalancerURL  string
 	testStartedAt    time.Time
 	backendCounters  map[string]envoyEndpointCounters
 }
 
-func NewEngine(target string, protoDir string, envoyAdminURL string) (*Engine, error) {
+func NewEngine(target string, protoDir string, envoyAdminURL string, loadBalancerURL string) (*Engine, error) {
 	endpoints, err := ParseProtoFiles(protoDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize engine: %w", err)
@@ -94,6 +98,7 @@ func NewEngine(target string, protoDir string, envoyAdminURL string) (*Engine, e
 		conn:             conn,
 		stub:             grpcdynamic.NewStub(conn),
 		envoyAdminURL:    envoyAdminURL,
+		loadBalancerURL:  loadBalancerURL,
 		stats: Stats{
 			EndpointStats:  make(map[string]*EndpointStats),
 			latencyBuckets: make([]atomic.Int64, len(latencyBucketBounds)+1),
@@ -176,6 +181,10 @@ func (e *Engine) StartTest(rawConfig TestConfig) error {
 		e.mu.Unlock()
 		return fmt.Errorf("no endpoints selected")
 	}
+	if config.FileSizeMinKB < 1 || config.FileSizeMaxKB < config.FileSizeMinKB || config.FileSizeMaxKB > 47*1024 {
+		e.mu.Unlock()
+		return fmt.Errorf("file size range must be between 1 and %d KB, with min <= max", 47*1024)
+	}
 	e.isRunning = true
 	e.stats.SuccessfulRequests.Store(0)
 	e.stats.FailedRequests.Store(0)
@@ -191,6 +200,16 @@ func (e *Engine) StartTest(rawConfig TestConfig) error {
 	e.cancelFunc = cancel
 	e.mu.Unlock()
 
+	if config.Algorithm != "" {
+		switchCtx, switchCancel := context.WithTimeout(ctx, 5*time.Second)
+		err := e.SetBalancerAlgorithm(switchCtx, config.Algorithm)
+		switchCancel()
+		if err != nil {
+			e.abortTest()
+			return fmt.Errorf("failed to select load-balancing algorithm: %w", err)
+		}
+	}
+
 	preset := config.Preset
 	if preset == "" {
 		preset = "custom"
@@ -198,10 +217,11 @@ func (e *Engine) StartTest(rawConfig TestConfig) error {
 	metrics.SetTestRunning(preset, config.Concurrency, config.Duration, config.FileSizeKB)
 
 	log.Printf(
-		"Starting test: concurrency=%d duration=%ds fileSizeKb=%d warmupFiles=%d preset=%q endpoints=%v",
+		"Starting test: concurrency=%d duration=%ds fileSizeKb=%d-%d warmupFiles=%d preset=%q endpoints=%v",
 		config.Concurrency,
 		config.Duration,
-		config.FileSizeKB,
+		config.FileSizeMinKB,
+		config.FileSizeMaxKB,
 		config.WarmupFiles,
 		config.Preset,
 		config.Endpoints,
@@ -213,7 +233,7 @@ func (e *Engine) StartTest(rawConfig TestConfig) error {
 		return err
 	}
 
-	builder := NewPayloadBuilder(config.FileSizeKB)
+	builder := NewPayloadBuilder(config.FileSizeMinKB, config.FileSizeMaxKB)
 	if err := e.runWarmup(ctx, methodDescriptors, config, builder); err != nil {
 		log.Printf("Warmup warning: %v", err)
 	}

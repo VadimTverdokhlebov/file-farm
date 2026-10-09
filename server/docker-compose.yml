@@ -52,6 +52,8 @@ services:
       - ./logs/server-2:/src/logs
       - ../uploads:/src/uploads
       - ../protos:/src/protos
+    cpus: "2.0"
+    mem_limit: 2g
 
   app-3:
     <<: *server-common
@@ -67,6 +69,25 @@ services:
       - ./logs/server-3:/src/logs
       - ../uploads:/src/uploads
       - ../protos:/src/protos
+    cpus: "1.0"
+    mem_limit: 512m
+
+  app-4:
+    <<: *server-common
+    container_name: file-farm-server-4
+    environment:
+      POSTGRES_HOST: file-farm-postgres
+      GRPC_PORT: "50051"
+      METRICS_PORT: "9092"
+      GRPC_PROTO_FILE: protos/service.proto
+      FILES_SAVE_DIR: uploads/
+      INSTANCE_ID: "4"
+    volumes:
+      - ./logs/server-4:/src/logs
+      - ../uploads:/src/uploads
+      - ../protos:/src/protos
+    cpus: "2.0"
+    mem_limit: 4g
 
 networks:
   appnet:

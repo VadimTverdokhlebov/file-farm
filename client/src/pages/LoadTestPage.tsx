@@ -4,10 +4,22 @@ import { LoadPreset } from '../types/loadTest';
 import './LoadTestPage.css';
 
 export const LoadTestPage = () => {
-  const { endpoints, presets, status, startTest, stopTest, error, isLoading } = useLoadTest();
+  const {
+    endpoints,
+    presets,
+    algorithms,
+    selectedAlgorithm,
+    setSelectedAlgorithm,
+    status,
+    startTest,
+    stopTest,
+    error,
+    isLoading,
+  } = useLoadTest();
   const [concurrency, setConcurrency] = useState(30);
   const [duration, setDuration] = useState(120);
-  const [fileSizeKb, setFileSizeKb] = useState(256);
+  const [fileSizeMinKb, setFileSizeMinKb] = useState(128);
+  const [fileSizeMaxKb, setFileSizeMaxKb] = useState(1024);
   const [warmupFiles, setWarmupFiles] = useState(20);
   const [selectedPreset, setSelectedPreset] = useState<string>('mixed-files');
   const [selectedEndpoints, setSelectedEndpoints] = useState<Set<string>>(new Set());
@@ -15,7 +27,8 @@ export const LoadTestPage = () => {
   const applyPreset = (preset: LoadPreset) => {
     setSelectedPreset(preset.id);
     setSelectedEndpoints(new Set(preset.endpoints));
-    setFileSizeKb(preset.fileSizeKb || 256);
+    setFileSizeMinKb(preset.fileSizeKb || 128);
+    setFileSizeMaxKb(preset.fileSizeKb || 128);
     setWarmupFiles(preset.warmupFiles || 0);
   };
 
@@ -36,13 +49,23 @@ export const LoadTestPage = () => {
       alert('Select at least one endpoint or choose a preset');
       return;
     }
+    if (!selectedAlgorithm) {
+      alert('Select a load-balancing algorithm');
+      return;
+    }
+    if (fileSizeMinKb < 1 || fileSizeMaxKb < fileSizeMinKb || fileSizeMaxKb > 47 * 1024) {
+      alert('File size range must be between 1 KB and 47 MB, with minimum no greater than maximum');
+      return;
+    }
 
     startTest({
       concurrency,
       duration,
       endpoints: Array.from(selectedEndpoints),
+      algorithm: selectedAlgorithm,
       preset: selectedPreset || undefined,
-      fileSizeKb,
+      fileSizeMinKb,
+      fileSizeMaxKb,
       warmupFiles,
     });
   };
@@ -54,6 +77,20 @@ export const LoadTestPage = () => {
         <p className="hint">
           Run a preset, then change Envoy <code>lb_policy</code> and repeat the same test to compare Grafana dashboards.
         </p>
+
+        <div className="form-group">
+          <label htmlFor="algorithm">Load-balancing algorithm</label>
+          <select
+            id="algorithm"
+            value={selectedAlgorithm}
+            onChange={(e) => setSelectedAlgorithm(e.target.value)}
+            disabled={status.isRunning || isLoading}
+          >
+            {algorithms.map((algorithm) => (
+              <option key={algorithm.id} value={algorithm.id}>{algorithm.name}</option>
+            ))}
+          </select>
+        </div>
 
         <div className="presets-group">
           <h3>Presets</h3>
@@ -99,13 +136,33 @@ export const LoadTestPage = () => {
 
         <div className="form-row">
           <div className="form-group">
-            <label htmlFor="fileSizeKb">Upload file size (KB)</label>
+            <label htmlFor="fileSizeMinKb">Minimum file size (KB)</label>
             <input
-              id="fileSizeKb"
+              id="fileSizeMinKb"
               type="number"
               min={1}
-              value={fileSizeKb}
-              onChange={(e) => setFileSizeKb(parseInt(e.target.value, 10) || 1)}
+              max={47 * 1024}
+              value={fileSizeMinKb}
+              onChange={(e) => {
+                setFileSizeMinKb(parseInt(e.target.value, 10) || 1);
+                setSelectedPreset('');
+              }}
+              disabled={status.isRunning}
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="fileSizeMaxKb">Maximum file size (KB)</label>
+            <input
+              id="fileSizeMaxKb"
+              type="number"
+              min={1}
+              max={47 * 1024}
+              value={fileSizeMaxKb}
+              onChange={(e) => {
+                setFileSizeMaxKb(parseInt(e.target.value, 10) || 1);
+                setSelectedPreset('');
+              }}
               disabled={status.isRunning}
             />
           </div>

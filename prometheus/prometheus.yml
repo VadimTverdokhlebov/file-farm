@@ -20,6 +20,7 @@ scrape_configs:
           - 'file-farm-server-1:9092'
           - 'file-farm-server-2:9092'
           - 'file-farm-server-3:9092'
+          - 'file-farm-server-4:9092'
         labels:
           service: 'grpc-server'
 

@@ -29,9 +29,22 @@ export interface TestConfig {
   concurrency: number;
   duration: number;
   endpoints: string[];
+  algorithm: string;
   preset?: string;
   fileSizeKb?: number;
+  fileSizeMinKb: number;
+  fileSizeMaxKb: number;
   warmupFiles?: number;
+}
+
+export interface BalancerAlgorithm {
+  id: string;
+  name: string;
+}
+
+export interface BalancerConfiguration {
+  algorithms: BalancerAlgorithm[];
+  selected: string;
 }
 
 export interface LoadPreset {

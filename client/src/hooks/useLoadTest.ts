@@ -1,10 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { TestStatus, TestConfig, LoadPreset } from '../types/loadTest';
+import { TestStatus, TestConfig, LoadPreset, BalancerAlgorithm, BalancerConfiguration } from '../types/loadTest';
 import { fetchLoadStandJson, getLoadStandWsUrl } from '../config/loadStand';
 
 interface UseLoadTestReturn {
   endpoints: string[];
   presets: LoadPreset[];
+  algorithms: BalancerAlgorithm[];
+  selectedAlgorithm: string;
+  setSelectedAlgorithm: (algorithm: string) => void;
   status: TestStatus;
   startTest: (config: TestConfig) => void;
   stopTest: () => void;
@@ -29,6 +32,8 @@ interface WebSocketMessage {
 export const useLoadTest = (): UseLoadTestReturn => {
   const [endpoints, setEndpoints] = useState<string[]>([]);
   const [presets, setPresets] = useState<LoadPreset[]>([]);
+  const [algorithms, setAlgorithms] = useState<BalancerAlgorithm[]>([]);
+  const [selectedAlgorithm, setSelectedAlgorithm] = useState('');
   const [status, setStatus] = useState<TestStatus>({
     isRunning: false,
     stats: { successfulRequests: 0, failedRequests: 0, report: null },
@@ -40,13 +45,16 @@ export const useLoadTest = (): UseLoadTestReturn => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [endpointsData, presetsData] = await Promise.all([
+        const [endpointsData, presetsData, balancerConfiguration] = await Promise.all([
           fetchLoadStandJson<string[]>('/api/endpoints'),
           fetchLoadStandJson<LoadPreset[]>('/api/presets'),
+          fetchLoadStandJson<BalancerConfiguration>('/api/algorithms'),
         ]);
 
         setEndpoints(endpointsData || []);
         setPresets(presetsData || []);
+        setAlgorithms(balancerConfiguration.algorithms || []);
+        setSelectedAlgorithm(balancerConfiguration.selected || '');
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unknown error');
       } finally {
@@ -101,5 +109,16 @@ export const useLoadTest = (): UseLoadTestReturn => {
   const startTest = useCallback((config: TestConfig) => sendCommand('start', config), [sendCommand]);
   const stopTest = useCallback(() => sendCommand('stop'), [sendCommand]);
 
-  return { endpoints, presets, status, startTest, stopTest, error, isLoading };
+  return {
+    endpoints,
+    presets,
+    algorithms,
+    selectedAlgorithm,
+    setSelectedAlgorithm,
+    status,
+    startTest,
+    stopTest,
+    error,
+    isLoading,
+  };
 };

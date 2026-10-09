@@ -1,11 +1,11 @@
 package engine
 
 const (
-	UploadFileRPC  = "/filefarm.file.FileService/UploadFile"
+	UploadFileRPC   = "/filefarm.file.FileService/UploadFile"
 	DownloadFileRPC = "/filefarm.file.FileService/DownloadFile"
 	CompressFileRPC = "/filefarm.file.FileService/CompressFile"
-	CreateUserRPC  = "/filefarm.user.UserService/CreateUser"
-	GetUserRPC     = "/filefarm.user.UserService/GetUser"
+	CreateUserRPC   = "/filefarm.user.UserService/CreateUser"
+	GetUserRPC      = "/filefarm.user.UserService/GetUser"
 )
 
 type Preset struct {
@@ -84,30 +84,44 @@ func (c TestConfig) WithDefaults() TestConfig {
 	if cfg.Duration < 0 {
 		cfg.Duration = 60
 	}
-	if cfg.FileSizeKB <= 0 {
-		cfg.FileSizeKB = 256
-	}
 	if cfg.WarmupFiles < 0 {
 		cfg.WarmupFiles = 0
 	}
 
+	var preset *Preset
 	if cfg.Preset != "" {
-		if preset, ok := ResolvePreset(cfg.Preset); ok {
+		if resolvedPreset, ok := ResolvePreset(cfg.Preset); ok {
+			preset = resolvedPreset
 			if len(cfg.Endpoints) == 0 {
-				cfg.Endpoints = append([]string(nil), preset.Endpoints...)
+				cfg.Endpoints = append([]string(nil), resolvedPreset.Endpoints...)
 			}
-			if c.FileSizeKB <= 0 && preset.FileSizeKB > 0 {
-				cfg.FileSizeKB = preset.FileSizeKB
-			}
-			if c.WarmupFiles <= 0 && preset.WarmupFiles > 0 {
-				cfg.WarmupFiles = preset.WarmupFiles
+			if c.WarmupFiles <= 0 && resolvedPreset.WarmupFiles > 0 {
+				cfg.WarmupFiles = resolvedPreset.WarmupFiles
 			}
 		}
 	}
 
-	if cfg.FileSizeKB <= 0 {
-		cfg.FileSizeKB = 256
+	if c.FileSizeMinKB <= 0 && c.FileSizeMaxKB <= 0 {
+		fixedSizeKB := c.FileSizeKB
+		if fixedSizeKB <= 0 && preset != nil {
+			fixedSizeKB = preset.FileSizeKB
+		}
+		if fixedSizeKB > 0 {
+			cfg.FileSizeMinKB = fixedSizeKB
+			cfg.FileSizeMaxKB = fixedSizeKB
+		} else {
+			cfg.FileSizeMinKB = 128
+			cfg.FileSizeMaxKB = 1024
+		}
+	} else {
+		if cfg.FileSizeMinKB <= 0 {
+			cfg.FileSizeMinKB = 128
+		}
+		if cfg.FileSizeMaxKB <= 0 {
+			cfg.FileSizeMaxKB = 1024
+		}
 	}
+	cfg.FileSizeKB = (cfg.FileSizeMinKB + cfg.FileSizeMaxKB) / 2
 
 	return cfg
 }

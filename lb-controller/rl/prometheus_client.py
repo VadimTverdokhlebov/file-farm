@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -24,9 +25,13 @@ class PrometheusClient:
 
         value = result[0].get("value", [None, None])[1]
         try:
-            return float(value)
+            scalar = float(value)
         except (TypeError, ValueError):
             return default
+        if not math.isfinite(scalar):
+            logger.debug("Prometheus returned a non-finite value for %s; using default", promql)
+            return default
+        return scalar
 
     def _instant_query(self, promql: str) -> dict:
         query = urllib.parse.urlencode({"query": promql})

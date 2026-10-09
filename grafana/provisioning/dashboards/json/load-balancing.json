@@ -235,7 +235,7 @@
     {
       "datasource": { "type": "prometheus" },
       "fieldConfig": {
-        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 20, "lineWidth": 2 }, "max": 1, "min": 0 },
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 20, "lineWidth": 2 }, "max": 2, "min": 0, "unit": "cores" },
         "overrides": []
       },
       "gridPos": { "h": 7, "w": 8, "x": 0, "y": 29 },
@@ -243,7 +243,7 @@
       "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
       "targets": [
         {
-          "expr": "max by (name) (rate(container_cpu_usage_seconds_total{name=~\"file-farm-server-[123]\"}[1m]))",
+          "expr": "max by (name) (rate(container_cpu_usage_seconds_total{name=~\"file-farm-server-[1-4]\"}[1m]))",
           "legendFormat": "{{name}}",
           "refId": "A"
         }
@@ -262,7 +262,7 @@
       "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
       "targets": [
         {
-          "expr": "max by (name) (container_memory_usage_bytes{name=~\"file-farm-server-[123]\"})",
+          "expr": "max by (name) (container_memory_usage_bytes{name=~\"file-farm-server-[1-4]\"})",
           "legendFormat": "{{name}}",
           "refId": "A"
         }
