@@ -3,6 +3,7 @@ package engine
 const (
 	UploadFileRPC  = "/filefarm.file.FileService/UploadFile"
 	DownloadFileRPC = "/filefarm.file.FileService/DownloadFile"
+	CompressFileRPC = "/filefarm.file.FileService/CompressFile"
 	CreateUserRPC  = "/filefarm.user.UserService/CreateUser"
 	GetUserRPC     = "/filefarm.user.UserService/GetUser"
 )
@@ -36,8 +37,8 @@ var presets = []Preset{
 	{
 		ID:          "mixed-files",
 		Name:        "Mixed file I/O",
-		Description: "UploadFile and DownloadFile together (50/50 random). Simulates read/write mix close to real file service usage.",
-		Endpoints:   []string{UploadFileRPC, DownloadFileRPC},
+		Description: "UploadFile, DownloadFile and CompressFile together with equal probability.",
+		Endpoints:   []string{UploadFileRPC, DownloadFileRPC, CompressFileRPC},
 		FileSizeKB:  256,
 		WarmupFiles: 20,
 	},
@@ -52,8 +53,8 @@ var presets = []Preset{
 	{
 		ID:          "full-mixed",
 		Name:        "Full mixed workload",
-		Description: "All four RPC methods. Best overall scenario before switching Envoy lb_policy and comparing Grafana dashboards.",
-		Endpoints:   []string{UploadFileRPC, DownloadFileRPC, CreateUserRPC, GetUserRPC},
+		Description: "All five RPC methods. Best overall scenario before switching Envoy lb_policy and comparing Grafana dashboards.",
+		Endpoints:   []string{UploadFileRPC, DownloadFileRPC, CompressFileRPC, CreateUserRPC, GetUserRPC},
 		FileSizeKB:  128,
 		WarmupFiles: 15,
 	},

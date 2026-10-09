@@ -44,6 +44,8 @@ func (b *PayloadBuilder) Populate(md *desc.MethodDescriptor, msg *dynamic.Messag
 	switch methodKey {
 	case "filefarm.file.FileService/UploadFile":
 		return b.fillUpload(msg)
+	case "filefarm.file.FileService/CompressFile":
+		return b.fillUpload(msg)
 	case "filefarm.file.FileService/DownloadFile":
 		return b.fillDownload(msg)
 	case "filefarm.user.UserService/CreateUser":
