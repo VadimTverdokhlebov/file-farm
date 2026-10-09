@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
-import { handleUploadFile, handleDownloadFile } from '../api/fileService';
+import { handleUploadFile, handleDownloadFile, handleCompressFile } from '../api/fileService';
 import './FilesPage.css';
 
 export const FilesPage = () => {
@@ -9,8 +9,12 @@ export const FilesPage = () => {
   const [downloadFileName, setDownloadFileName] = useState('');
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const [downloadStatus, setDownloadStatus] = useState<string | null>(null);
+  const [selectedCompressFile, setSelectedCompressFile] = useState<File | null>(null);
+  const [compressedFileStatus, setCompressedFileStatus] = useState<string | null>(null);
+  const [loadingCompressed, setLoadingCompressed] = useState(false);
   const [loading, setLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const compressFileInputRef = useRef<HTMLInputElement>(null);
   const downloadLinkRef = useRef<HTMLAnchorElement>(null);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -18,6 +22,14 @@ export const FilesPage = () => {
     if (file) {
       setSelectedFile(file);
       setUploadStatus(null);
+    }
+  };
+
+  const handleCompressFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedCompressFile(file);
+      setCompressedFileStatus(null);
     }
   };
 
@@ -89,6 +101,70 @@ export const FilesPage = () => {
     }
   };
 
+const handleCompress = async () => {
+  const fileToCompress = selectedCompressFile; 
+
+  if (!fileToCompress) {
+    setCompressedFileStatus('Please select a file first');
+    return;
+  }
+
+  setLoadingCompressed(true);
+  setCompressedFileStatus(null);
+
+  try {
+    const arrayBuffer = await fileToCompress.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+
+    const response = await handleCompressFile(
+      fileToCompress.name, 
+      uint8Array, 
+      fileToCompress.type || 'application/octet-stream'
+    );
+
+    if (!response.compressedContent || response.compressedContent.length === 0) {
+      setCompressedFileStatus('File not found or empty');
+      return;
+    }
+
+    if (response.success) {
+      setCompressedFileStatus(`Success: ${response.message}`);
+      
+      const base64Content = response.compressedContent;
+      const binaryString = atob(base64Content);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+
+      const blob = new Blob([bytes], { type: 'application/gzip' }); 
+      const url = URL.createObjectURL(blob);
+
+      if (downloadLinkRef.current) {
+        const originalName = fileToCompress.name;
+        const newFileName = `${originalName.split('.')[0]}_compressed.${originalName.split('.').pop()}.gz`;
+        downloadLinkRef.current.href = url;
+        downloadLinkRef.current.download = newFileName; 
+        downloadLinkRef.current.click();
+        
+        URL.revokeObjectURL(url);
+      }
+
+      setSelectedCompressFile(null);
+      if (compressFileInputRef.current) {
+        compressFileInputRef.current.value = '';
+      }
+
+    } else {
+      setCompressedFileStatus(`Error: ${response.message || 'Upload failed'}`);
+    }
+  } catch (error) {
+    setCompressedFileStatus(`Error: ${error instanceof Error ? error.message : 'Failed to compress file'}`);
+  } finally {
+    setLoadingCompressed(false);
+  }
+};
+
   return (
     <div className="files-page">
       <div className="files-container">
@@ -128,6 +204,41 @@ export const FilesPage = () => {
                 }`}
               >
                 {uploadStatus}
+              </div>
+            )}
+          </section>
+
+          <section className="upload-section">
+            <h2>Compress File</h2>
+            <div className="file-input-wrapper">
+              <input
+                ref={compressFileInputRef}
+                type="file"
+                onChange={handleCompressFileSelect}
+                className="file-input"
+                id="compress-file-input"
+              />
+              <label htmlFor="compress-file-input" className="file-input-label">
+                {selectedCompressFile ? selectedCompressFile.name : 'Choose a file...'}
+              </label>
+            </div>
+            {selectedCompressFile && (
+              <div className="file-info">
+                <p>File: {selectedCompressFile.name}</p>
+                <p>Size: {(selectedCompressFile.size / 1024).toFixed(2)} KB</p>
+                <p>Type: {selectedCompressFile.type || 'Unknown'}</p>
+              </div>
+            )}
+            <Button onClick={handleCompress} disabled={!selectedCompressFile || loadingCompressed}>
+              {loadingCompressed ? 'Compressing...' : 'Compress File'}
+            </Button>
+            {compressedFileStatus && (
+              <div
+                className={`status-message ${
+                  compressedFileStatus.startsWith('Success') ? 'success' : 'error'
+                }`}
+              >
+                {compressedFileStatus}
               </div>
             )}
           </section>

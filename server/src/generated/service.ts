@@ -1,6 +1,8 @@
 import type * as grpc from '@grpc/grpc-js';
 import type { MessageTypeDefinition } from '@grpc/proto-loader';
 
+import type { CompressFileRequest as _filefarm_file_CompressFileRequest, CompressFileRequest__Output as _filefarm_file_CompressFileRequest__Output } from './filefarm/file/CompressFileRequest';
+import type { CompressFileResponse as _filefarm_file_CompressFileResponse, CompressFileResponse__Output as _filefarm_file_CompressFileResponse__Output } from './filefarm/file/CompressFileResponse';
 import type { DownloadFileRequest as _filefarm_file_DownloadFileRequest, DownloadFileRequest__Output as _filefarm_file_DownloadFileRequest__Output } from './filefarm/file/DownloadFileRequest';
 import type { DownloadFileResponse as _filefarm_file_DownloadFileResponse, DownloadFileResponse__Output as _filefarm_file_DownloadFileResponse__Output } from './filefarm/file/DownloadFileResponse';
 import type { FileServiceClient as _filefarm_file_FileServiceClient, FileServiceDefinition as _filefarm_file_FileServiceDefinition } from './filefarm/file/FileService';
@@ -19,6 +21,8 @@ type SubtypeConstructor<Constructor extends new (...args: any) => any, Subtype> 
 export interface ProtoGrpcType {
   filefarm: {
     file: {
+      CompressFileRequest: MessageTypeDefinition<_filefarm_file_CompressFileRequest, _filefarm_file_CompressFileRequest__Output>
+      CompressFileResponse: MessageTypeDefinition<_filefarm_file_CompressFileResponse, _filefarm_file_CompressFileResponse__Output>
       DownloadFileRequest: MessageTypeDefinition<_filefarm_file_DownloadFileRequest, _filefarm_file_DownloadFileRequest__Output>
       DownloadFileResponse: MessageTypeDefinition<_filefarm_file_DownloadFileResponse, _filefarm_file_DownloadFileResponse__Output>
       FileService: SubtypeConstructor<typeof grpc.Client, _filefarm_file_FileServiceClient> & { service: _filefarm_file_FileServiceDefinition }

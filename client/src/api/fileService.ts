@@ -45,3 +45,33 @@ export const handleUploadFile = async (filename: string, content: Uint8Array, mi
   }
   return response.response;
 };
+
+export const handleCompressFile = async (filename: string, content: Uint8Array, mimetype: string) => {
+  // Encode Uint8Array to base64
+  // Convert Uint8Array to binary string in chunks to avoid stack overflow
+  let binaryString = '';
+  const chunkSize = 8192;
+  for (let i = 0; i < content.length; i += chunkSize) {
+    const chunk = content.slice(i, i + chunkSize);
+    for (let j = 0; j < chunk.length; j++) {
+      binaryString += String.fromCharCode(chunk[j]);
+    }
+  }
+  const base64Content = btoa(binaryString);
+  console.log({ 
+    filename, 
+    content: base64Content, 
+    mimetype 
+  });
+  
+  const response = await fileClient.compressFile({ 
+    filename, 
+    content: base64Content, 
+    mimetype 
+  });
+
+  if (!response.response.success) {
+    throw new Error(response.response.message || 'Upload failed');
+  }
+  return response.response;
+};

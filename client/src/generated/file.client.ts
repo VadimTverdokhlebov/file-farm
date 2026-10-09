@@ -4,6 +4,8 @@
 import type { RpcTransport } from "@protobuf-ts/runtime-rpc";
 import type { ServiceInfo } from "@protobuf-ts/runtime-rpc";
 import { FileService } from "./file";
+import type { CompressFileResponse } from "./file";
+import type { CompressFileRequest } from "./file";
 import type { DownloadFileResponse } from "./file";
 import type { DownloadFileRequest } from "./file";
 import { stackIntercept } from "@protobuf-ts/runtime-rpc";
@@ -23,6 +25,10 @@ export interface IFileServiceClient {
      * @generated from protobuf rpc: DownloadFile
      */
     downloadFile(input: DownloadFileRequest, options?: RpcOptions): UnaryCall<DownloadFileRequest, DownloadFileResponse>;
+    /**
+     * @generated from protobuf rpc: CompressFile
+     */
+    compressFile(input: CompressFileRequest, options?: RpcOptions): UnaryCall<CompressFileRequest, CompressFileResponse>;
 }
 /**
  * @generated from protobuf service filefarm.file.FileService
@@ -46,5 +52,12 @@ export class FileServiceClient implements IFileServiceClient, ServiceInfo {
     downloadFile(input: DownloadFileRequest, options?: RpcOptions): UnaryCall<DownloadFileRequest, DownloadFileResponse> {
         const method = this.methods[1], opt = this._transport.mergeOptions(options);
         return stackIntercept<DownloadFileRequest, DownloadFileResponse>("unary", this._transport, method, opt, input);
+    }
+    /**
+     * @generated from protobuf rpc: CompressFile
+     */
+    compressFile(input: CompressFileRequest, options?: RpcOptions): UnaryCall<CompressFileRequest, CompressFileResponse> {
+        const method = this.methods[2], opt = this._transport.mergeOptions(options);
+        return stackIntercept<CompressFileRequest, CompressFileResponse>("unary", this._transport, method, opt, input);
     }
 }

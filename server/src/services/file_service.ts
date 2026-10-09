@@ -1,6 +1,9 @@
 import { ServerUnaryCall, sendUnaryData } from '@grpc/grpc-js';
 import { promises as fs } from 'fs';
 import path from 'path';
+import * as zlib from 'zlib';
+import { constants } from 'zlib';
+import { promisify } from 'util';
 import { v4 as uuidv4 } from 'uuid';
 import logger from '../utils/logger';
 import { config } from '../utils/secrets';
@@ -10,6 +13,10 @@ import { DownloadFileRequest__Output } from '../generated/filefarm/file/Download
 import { DownloadFileResponse } from '../generated/filefarm/file/DownloadFileResponse';
 import { fileRepository } from '../persistance/query/FileRepository';
 import { recordGrpcRequestEnd, recordGrpcRequestStart } from '../utils/metrics';
+import { CompressFileRequest__Output } from '../generated/filefarm/file/CompressFileRequest';
+import { CompressFileResponse } from '../generated/filefarm/file/CompressFileResponse';
+
+const gzipAsync = promisify(zlib.gzip);
 
 // Ensure uploads directory exists
 async function ensureUploadsDir(): Promise<void> {
@@ -151,6 +158,61 @@ export async function DownloadFile(
         };
 
         recordGrpcRequestEnd('DownloadFile', 'error', startedAt);
+        callback(null, response);
+    }
+}
+
+export async function CompressFile(
+    call: ServerUnaryCall<CompressFileRequest__Output, CompressFileResponse>,
+    callback: sendUnaryData<CompressFileResponse>
+) {
+    const request: CompressFileRequest__Output = call.request;
+    const startedAt = recordGrpcRequestStart(); // ваша функция метрик
+    
+    try {
+        if (!request.content || request.content.length === 0) {
+            throw new Error('File content is empty');
+        }
+
+        if (!request.filename) {
+            throw new Error('Filename is required');
+        }
+
+        logger.info('==============================================');
+        logger.info(`Compressing file: ${request.filename}`);
+        logger.info('==============================================');
+
+        const originalFilename = request.filename;
+
+        const base64Content = request.content;
+        const fileBuffer = Buffer.from(base64Content, 'base64');
+        const originalSize = fileBuffer.length;
+
+        const compressedBuffer = await gzipAsync(new Uint8Array(fileBuffer), {
+            level: constants.Z_BEST_COMPRESSION
+        });
+        const compressedSize = compressedBuffer.length;
+
+        const compressedContent = compressedBuffer.toString('base64');
+
+        logger.info(`File ${originalFilename} compressed: ${originalSize} bytes -> ${compressedSize} bytes (Saved ${(100 - (compressedSize/originalSize)*100).toFixed(2)}%)`);
+
+        const response: CompressFileResponse = {
+            message: `File successfully compressed. Size reduced from ${originalSize} to ${compressedSize} bytes.`,
+            compressedContent: compressedContent,
+            success: true
+        };
+
+        recordGrpcRequestEnd('CompressFile', 'ok', startedAt);
+        callback(null, response);
+    } catch (error) {
+        logger.error('Error compressing file:', error);
+        const errorMessage = error instanceof Error ? error.message : 'Failed to compress file';
+        const response: CompressFileResponse = {
+            message: `Error: ${errorMessage}`,
+            success: false
+        };
+        recordGrpcRequestEnd('CompressFile', 'error', startedAt);
         callback(null, response);
     }
 }
