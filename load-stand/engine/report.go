@@ -3,7 +3,6 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -148,25 +147,36 @@ func summarizeTest(
 }
 
 func percentileMillis(bucketCounts []int64, percentile float64) float64 {
-	var sampleCount int64
+	var totalCount int64
 	for _, count := range bucketCounts {
-		sampleCount += count
+		totalCount += count
 	}
-	if sampleCount == 0 {
+	if totalCount == 0 {
 		return 0
 	}
-
-	rank := int64(math.Ceil(percentile * float64(sampleCount)))
+	rank := percentile * float64(totalCount)
 	var cumulative int64
 	for index, count := range bucketCounts {
+		prevCumulative := cumulative
 		cumulative += count
-		if cumulative >= rank {
-			if index == len(latencyBucketBounds) {
+		if float64(cumulative) >= rank {
+			var lowerBound time.Duration
+			if index > 0 {
+				lowerBound = latencyBucketBounds[index-1]
+			}
+			if index >= len(latencyBucketBounds) {
 				return float64(latencyBucketBounds[len(latencyBucketBounds)-1].Milliseconds())
 			}
-			return float64(latencyBucketBounds[index].Nanoseconds()) / float64(time.Millisecond)
+			upperBound := latencyBucketBounds[index]
+			if count == 0 {
+				return float64(upperBound.Nanoseconds()) / float64(time.Millisecond)
+			}
+			fraction := (rank - float64(prevCumulative)) / float64(count)
+			interpolated := lowerBound + time.Duration(fraction*float64(upperBound-lowerBound))
+			return float64(interpolated.Nanoseconds()) / float64(time.Millisecond)
 		}
 	}
+
 	return 0
 }
 

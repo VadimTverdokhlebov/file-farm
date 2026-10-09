@@ -25,8 +25,12 @@ RUN npm ci --only=production && npm cache clean --force
 COPY --from=build /src/build ./build
 COPY --from=build /src/protos ./protos
 
+RUN npm install -g pm2
+
 RUN mkdir -p logs
 
 EXPOSE 50051 9092
 
-CMD ["npm", "start"]
+ENV WORKERS=1
+
+CMD pm2-runtime start build/server.js -i $WORKERS

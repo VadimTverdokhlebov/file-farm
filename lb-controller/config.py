@@ -83,5 +83,5 @@ AM_PPO_REWARD_CPU_WEIGHT = float(os.environ.get("AM_PPO_REWARD_CPU_WEIGHT", "2.0
 AM_PPO_REWARD_CHURN_WEIGHT = float(os.environ.get("AM_PPO_REWARD_CHURN_WEIGHT", "0.5"))
 
 # Static capacity hints for each backend (used in the RL state vector).
-BACKEND_CPU_LIMITS = os.environ.get("BACKEND_CPU_LIMITS", "1,2,1,2")
-BACKEND_MEMORY_LIMITS_GB = os.environ.get("BACKEND_MEMORY_LIMITS_GB", "1,2,0.5,4")
+BACKEND_CPU_LIMITS = os.environ.get("BACKEND_CPU_LIMITS", "0.5,1,0.5,2")
+BACKEND_MEMORY_LIMITS_GB = os.environ.get("BACKEND_MEMORY_LIMITS_GB", "1,1,0.5,1.5")
