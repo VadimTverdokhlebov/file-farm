@@ -4,6 +4,8 @@ import type * as grpc from '@grpc/grpc-js'
 import type { MethodDefinition } from '@grpc/proto-loader'
 import type { CompressFileRequest as _filefarm_file_CompressFileRequest, CompressFileRequest__Output as _filefarm_file_CompressFileRequest__Output } from '../../filefarm/file/CompressFileRequest';
 import type { CompressFileResponse as _filefarm_file_CompressFileResponse, CompressFileResponse__Output as _filefarm_file_CompressFileResponse__Output } from '../../filefarm/file/CompressFileResponse';
+import type { DeleteFileRequest as _filefarm_file_DeleteFileRequest, DeleteFileRequest__Output as _filefarm_file_DeleteFileRequest__Output } from '../../filefarm/file/DeleteFileRequest';
+import type { DeleteFileResponse as _filefarm_file_DeleteFileResponse, DeleteFileResponse__Output as _filefarm_file_DeleteFileResponse__Output } from '../../filefarm/file/DeleteFileResponse';
 import type { DownloadFileRequest as _filefarm_file_DownloadFileRequest, DownloadFileRequest__Output as _filefarm_file_DownloadFileRequest__Output } from '../../filefarm/file/DownloadFileRequest';
 import type { DownloadFileResponse as _filefarm_file_DownloadFileResponse, DownloadFileResponse__Output as _filefarm_file_DownloadFileResponse__Output } from '../../filefarm/file/DownloadFileResponse';
 import type { UploadFileRequest as _filefarm_file_UploadFileRequest, UploadFileRequest__Output as _filefarm_file_UploadFileRequest__Output } from '../../filefarm/file/UploadFileRequest';
@@ -18,6 +20,15 @@ export interface FileServiceClient extends grpc.Client {
   compressFile(argument: _filefarm_file_CompressFileRequest, metadata: grpc.Metadata, callback: grpc.requestCallback<_filefarm_file_CompressFileResponse__Output>): grpc.ClientUnaryCall;
   compressFile(argument: _filefarm_file_CompressFileRequest, options: grpc.CallOptions, callback: grpc.requestCallback<_filefarm_file_CompressFileResponse__Output>): grpc.ClientUnaryCall;
   compressFile(argument: _filefarm_file_CompressFileRequest, callback: grpc.requestCallback<_filefarm_file_CompressFileResponse__Output>): grpc.ClientUnaryCall;
+  
+  DeleteFile(argument: _filefarm_file_DeleteFileRequest, metadata: grpc.Metadata, options: grpc.CallOptions, callback: grpc.requestCallback<_filefarm_file_DeleteFileResponse__Output>): grpc.ClientUnaryCall;
+  DeleteFile(argument: _filefarm_file_DeleteFileRequest, metadata: grpc.Metadata, callback: grpc.requestCallback<_filefarm_file_DeleteFileResponse__Output>): grpc.ClientUnaryCall;
+  DeleteFile(argument: _filefarm_file_DeleteFileRequest, options: grpc.CallOptions, callback: grpc.requestCallback<_filefarm_file_DeleteFileResponse__Output>): grpc.ClientUnaryCall;
+  DeleteFile(argument: _filefarm_file_DeleteFileRequest, callback: grpc.requestCallback<_filefarm_file_DeleteFileResponse__Output>): grpc.ClientUnaryCall;
+  deleteFile(argument: _filefarm_file_DeleteFileRequest, metadata: grpc.Metadata, options: grpc.CallOptions, callback: grpc.requestCallback<_filefarm_file_DeleteFileResponse__Output>): grpc.ClientUnaryCall;
+  deleteFile(argument: _filefarm_file_DeleteFileRequest, metadata: grpc.Metadata, callback: grpc.requestCallback<_filefarm_file_DeleteFileResponse__Output>): grpc.ClientUnaryCall;
+  deleteFile(argument: _filefarm_file_DeleteFileRequest, options: grpc.CallOptions, callback: grpc.requestCallback<_filefarm_file_DeleteFileResponse__Output>): grpc.ClientUnaryCall;
+  deleteFile(argument: _filefarm_file_DeleteFileRequest, callback: grpc.requestCallback<_filefarm_file_DeleteFileResponse__Output>): grpc.ClientUnaryCall;
   
   DownloadFile(argument: _filefarm_file_DownloadFileRequest, metadata: grpc.Metadata, options: grpc.CallOptions, callback: grpc.requestCallback<_filefarm_file_DownloadFileResponse__Output>): grpc.ClientUnaryCall;
   DownloadFile(argument: _filefarm_file_DownloadFileRequest, metadata: grpc.Metadata, callback: grpc.requestCallback<_filefarm_file_DownloadFileResponse__Output>): grpc.ClientUnaryCall;
@@ -42,6 +53,8 @@ export interface FileServiceClient extends grpc.Client {
 export interface FileServiceHandlers extends grpc.UntypedServiceImplementation {
   CompressFile: grpc.handleUnaryCall<_filefarm_file_CompressFileRequest__Output, _filefarm_file_CompressFileResponse>;
   
+  DeleteFile: grpc.handleUnaryCall<_filefarm_file_DeleteFileRequest__Output, _filefarm_file_DeleteFileResponse>;
+  
   DownloadFile: grpc.handleUnaryCall<_filefarm_file_DownloadFileRequest__Output, _filefarm_file_DownloadFileResponse>;
   
   UploadFile: grpc.handleUnaryCall<_filefarm_file_UploadFileRequest__Output, _filefarm_file_UploadFileResponse>;
@@ -50,6 +63,7 @@ export interface FileServiceHandlers extends grpc.UntypedServiceImplementation {
 
 export interface FileServiceDefinition extends grpc.ServiceDefinition {
   CompressFile: MethodDefinition<_filefarm_file_CompressFileRequest, _filefarm_file_CompressFileResponse, _filefarm_file_CompressFileRequest__Output, _filefarm_file_CompressFileResponse__Output>
+  DeleteFile: MethodDefinition<_filefarm_file_DeleteFileRequest, _filefarm_file_DeleteFileResponse, _filefarm_file_DeleteFileRequest__Output, _filefarm_file_DeleteFileResponse__Output>
   DownloadFile: MethodDefinition<_filefarm_file_DownloadFileRequest, _filefarm_file_DownloadFileResponse, _filefarm_file_DownloadFileRequest__Output, _filefarm_file_DownloadFileResponse__Output>
   UploadFile: MethodDefinition<_filefarm_file_UploadFileRequest, _filefarm_file_UploadFileResponse, _filefarm_file_UploadFileRequest__Output, _filefarm_file_UploadFileResponse__Output>
 }

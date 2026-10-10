@@ -6,7 +6,7 @@ import { ProtoGrpcType } from './generated/service';
 import { UserServiceHandlers } from './generated/filefarm/user/UserService';
 import { FileServiceHandlers } from './generated/filefarm/file/FileService';
 import { CreateUser, GetUser } from './services/user_service';
-import { UploadFile, DownloadFile, CompressFile } from './services/file_service';
+import { UploadFile, DownloadFile, CompressFile, DeleteFile } from './services/file_service';
 
 console.log('config.grpc.protoFile', config.grpc.protoFile);
 const servicePackageDef = protoLoader.loadSync(config.grpc.protoFile);
@@ -22,7 +22,7 @@ export default function getServer() {
     reflection.addToServer(server);
 
     server.addService(UserService, { CreateUser, GetUser } as UserServiceHandlers);
-    server.addService(FileService, { UploadFile, DownloadFile, CompressFile } as FileServiceHandlers);
+    server.addService(FileService, { UploadFile, DownloadFile, CompressFile, DeleteFile } as FileServiceHandlers);
 
     return server;
 }

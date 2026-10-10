@@ -15,6 +15,8 @@ import { fileRepository } from '../persistance/query/FileRepository';
 import { recordGrpcRequestEnd, recordGrpcRequestStart } from '../utils/metrics';
 import { CompressFileRequest__Output } from '../generated/filefarm/file/CompressFileRequest';
 import { CompressFileResponse } from '../generated/filefarm/file/CompressFileResponse';
+import { DeleteFileRequest__Output } from '../generated/filefarm/file/DeleteFileRequest';
+import { DeleteFileResponse } from '../generated/filefarm/file/DeleteFileResponse';
 
 const gzipAsync = promisify(zlib.gzip);
 
@@ -213,6 +215,58 @@ export async function CompressFile(
             success: false
         };
         recordGrpcRequestEnd('CompressFile', 'error', startedAt);
+        callback(null, response);
+    }
+}
+
+export async function DeleteFile(
+    call: ServerUnaryCall<DeleteFileRequest__Output, DeleteFileResponse>,
+    callback: sendUnaryData<DeleteFileResponse>
+) {
+    const request: DeleteFileRequest__Output = call.request;
+    const startedAt = recordGrpcRequestStart();
+
+    try {
+        if (!request.filename) {
+            throw new Error('Filename is required');
+        }
+
+        let file = await fileRepository.findByOriginalFilename(request.filename);
+        if (!file) {
+            file = await fileRepository.findByFilename(request.filename);
+        }
+
+        if (!file) {
+            throw new Error(`File ${request.filename} not found`);
+        }
+
+        try {
+            await fs.unlink(file.filePath);
+            logger.info(`File deleted from filesystem: ${file.filePath}`);
+        } catch (e) {
+            logger.warn(`Could not delete file from filesystem: ${e}`);
+        }
+
+        await fileRepository.delete(file.id);
+        logger.info(`File ${file.originalFilename} deleted from database`);
+
+        const response: DeleteFileResponse = {
+            message: `File ${request.filename} successfully deleted`,
+            success: true
+        };
+
+        recordGrpcRequestEnd('DeleteFile', 'ok', startedAt);
+        callback(null, response);
+    } catch (error) {
+        logger.error('Error deleting file:', error);
+        const errorMessage = error instanceof Error ? error.message : 'Failed to delete file';
+        
+        const response: DeleteFileResponse = {
+            message: `Error: ${errorMessage}`,
+            success: false
+        };
+
+        recordGrpcRequestEnd('DeleteFile', 'error', startedAt);
         callback(null, response);
     }
 }

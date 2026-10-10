@@ -5,7 +5,17 @@ package filefarm.file;
 service FileService {
     rpc UploadFile(UploadFileRequest) returns (UploadFileResponse);
     rpc DownloadFile(DownloadFileRequest) returns (DownloadFileResponse);
+    rpc DeleteFile(DeleteFileRequest) returns (DeleteFileResponse);
     rpc CompressFile(CompressFileRequest) returns (CompressFileResponse);
+}
+
+message DeleteFileRequest {
+    string filename = 1;
+}
+
+message DeleteFileResponse {
+    string message = 1;
+    bool success = 2;
 }
 
 message UploadFileRequest {

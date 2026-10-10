@@ -39,6 +39,17 @@ func (b *PayloadBuilder) RecordUploadedFile(filename string) {
 	b.uploadedFiles = append(b.uploadedFiles, filename)
 }
 
+func (b *PayloadBuilder) RecordDeletedFile(filename string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for i, f := range b.uploadedFiles {
+		if f == filename {
+			b.uploadedFiles = append(b.uploadedFiles[:i], b.uploadedFiles[i+1:]...)
+			break
+		}
+	}
+}
+
 func (b *PayloadBuilder) RecordCreatedLogin(login string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -56,6 +67,8 @@ func (b *PayloadBuilder) Populate(md *desc.MethodDescriptor, msg *dynamic.Messag
 		return b.fillUpload(msg)
 	case "filefarm.file.FileService/DownloadFile":
 		return b.fillDownload(msg)
+	case "filefarm.file.FileService/DeleteFile":
+		return b.fillDeleteFile(msg)
 	case "filefarm.user.UserService/CreateUser":
 		return b.fillCreateUser(msg)
 	case "filefarm.user.UserService/GetUser":
@@ -73,6 +86,10 @@ func (b *PayloadBuilder) HandleResponse(md *desc.MethodDescriptor, req *dynamic.
 	case "filefarm.file.FileService/UploadFile":
 		if filename, err := req.TryGetFieldByName("filename"); err == nil {
 			b.RecordUploadedFile(fmt.Sprint(filename))
+		}
+	case "filefarm.file.FileService/DeleteFile":
+		if filename, err := req.TryGetFieldByName("filename"); err == nil {
+			b.RecordDeletedFile(fmt.Sprint(filename))
 		}
 	case "filefarm.user.UserService/CreateUser":
 		if login, err := req.TryGetFieldByName("login"); err == nil {
@@ -114,6 +131,18 @@ func (b *PayloadBuilder) fillDownload(msg *dynamic.Message) error {
 
 	if len(b.uploadedFiles) == 0 {
 		return fmt.Errorf("no uploaded files available for download yet")
+	}
+
+	filename := b.uploadedFiles[mathrand.Intn(len(b.uploadedFiles))]
+	return msg.TrySetFieldByName("filename", filename)
+}
+
+func (b *PayloadBuilder) fillDeleteFile(msg *dynamic.Message) error {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if len(b.uploadedFiles) == 0 {
+		return fmt.Errorf("no uploaded files available for delete yet")
 	}
 
 	filename := b.uploadedFiles[mathrand.Intn(len(b.uploadedFiles))]

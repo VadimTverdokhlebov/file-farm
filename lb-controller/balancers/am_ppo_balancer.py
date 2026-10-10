@@ -14,6 +14,7 @@ from config import (
     AM_PPO_ROLLOUT_SIZE,
     AM_PPO_UPDATE_EPOCHS,
     AM_PPO_VALUE_COEFFICIENT,
+    AM_PPO_MODEL_PATH,
     Backend,
 )
 from balancers.base import Balancer, LoadDecision
@@ -56,8 +57,6 @@ class AMPPOBalancer(Balancer):
         self._current_weights = equal_eds_weights(backends, weight_total=weight_total)
         self._metrics_source = metrics_source
         self._model = model or AMPPORLModel(
-            feature_size=len(backends) * 6,
-            action_size=len(backends),
             learning_rate=AM_PPO_LEARNING_RATE,
             gamma=AM_PPO_GAMMA,
             gae_lambda=AM_PPO_GAE_LAMBDA,
@@ -66,6 +65,7 @@ class AMPPOBalancer(Balancer):
             rollout_size=AM_PPO_ROLLOUT_SIZE,
             value_coefficient=AM_PPO_VALUE_COEFFICIENT,
             entropy_coefficient=AM_PPO_ENTROPY_COEFFICIENT,
+            model_path=AM_PPO_MODEL_PATH,
         )
         self._previous_transition: tuple[ClusterState, PpoAction, dict[str, int]] | None = None
 

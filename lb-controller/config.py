@@ -81,6 +81,7 @@ AM_PPO_REWARD_LATENCY_WEIGHT = float(os.environ.get("AM_PPO_REWARD_LATENCY_WEIGH
 AM_PPO_REWARD_ERROR_WEIGHT = float(os.environ.get("AM_PPO_REWARD_ERROR_WEIGHT", "10.0"))
 AM_PPO_REWARD_CPU_WEIGHT = float(os.environ.get("AM_PPO_REWARD_CPU_WEIGHT", "2.0"))
 AM_PPO_REWARD_CHURN_WEIGHT = float(os.environ.get("AM_PPO_REWARD_CHURN_WEIGHT", "0.5"))
+AM_PPO_MODEL_PATH = os.environ.get("AM_PPO_MODEL_PATH", "/app/data/am_ppo_model.pt")
 
 # Static capacity hints for each backend (used in the RL state vector).
 BACKEND_CPU_LIMITS = os.environ.get("BACKEND_CPU_LIMITS", "0.5,1,0.5,2")
