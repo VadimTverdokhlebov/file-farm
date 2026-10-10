@@ -1,4 +1,4 @@
-import client from 'prom-client';
+import client, { AggregatorRegistry } from 'prom-client';
 import http from 'http';
 import logger from './logger';
 
@@ -42,11 +42,50 @@ export function recordGrpcRequestEnd(method: string, status: 'ok' | 'error', sta
     grpcActiveRequests.dec();
 }
 
+export function workerCount(): number {
+    const parsed = Number.parseInt(process.env.WORKERS || '1', 10);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+        return 1;
+    }
+    return parsed;
+}
+
+export function enableClusterMetricsExport(): void {
+    // Registers the worker listener that replies to the primary's scrape.
+    new AggregatorRegistry();
+    AggregatorRegistry.setRegistries(register);
+}
+
 export function startMetricsServer(port: number): void {
+    listenForMetrics(port, async () => register.metrics(), register.contentType, 'Metrics server');
+}
+
+export function startAggregatedMetricsServer(port: number): void {
+    const aggregator = new AggregatorRegistry();
+    listenForMetrics(
+        port,
+        () => aggregator.clusterMetrics(),
+        aggregator.contentType,
+        'Aggregated metrics server',
+    );
+}
+
+function listenForMetrics(
+    port: number,
+    readMetrics: () => Promise<string>,
+    contentType: string,
+    label: string,
+): void {
     const server = http.createServer(async (req, res) => {
         if (req.url === '/metrics') {
-            res.setHeader('Content-Type', register.contentType);
-            res.end(await register.metrics());
+            try {
+                res.setHeader('Content-Type', contentType);
+                res.end(await readMetrics());
+            } catch (error) {
+                logger.error('Failed to collect metrics', error);
+                res.statusCode = 500;
+                res.end();
+            }
             return;
         }
 
@@ -55,6 +94,6 @@ export function startMetricsServer(port: number): void {
     });
 
     server.listen(port, '0.0.0.0', () => {
-        logger.info(`Metrics server listening on 0.0.0.0:${port} (instance ${instanceId})`);
+        logger.info(`${label} listening on 0.0.0.0:${port} (instance ${instanceId})`);
     });
 }

@@ -1,9 +1,26 @@
+import math
 import time
 
 from config import Backend
 from rl.metrics_source import MetricsSource
 from rl.prometheus_client import PrometheusClient
 from rl.types import ClusterState, ServerState
+
+
+def cpu_utilization_ratio(usage_cores: float, limit_cores: float) -> float:
+    """Fraction of the container CPU limit, not of a single core.
+
+    Two busy workers on a 2-CPU server use about 2.0 cores, which is 100% of
+    that server, not 200%.
+    """
+    if (
+        not math.isfinite(usage_cores)
+        or not math.isfinite(limit_cores)
+        or usage_cores <= 0.0
+        or limit_cores <= 0.0
+    ):
+        return 0.0
+    return min(usage_cores / limit_cores, 1.0)
 
 
 def backend_instance_id(backend: Backend) -> str:
@@ -106,12 +123,31 @@ class PrometheusMetricsSource(MetricsSource):
         return min(errors / total, 1.0)
 
     def _query_cpu_utilization(self, container_name: str, cpu_limit: float) -> float:
+        # cpu="total" is one series per container. Summing it with per-mode series
+        # would count the same cores twice and push a 2-CPU server over 100%.
         usage = self._client.query_scalar(
-            f'rate(container_cpu_usage_seconds_total{{name="{container_name}"}}[1m])'
+            "max(rate(container_cpu_usage_seconds_total"
+            f'{{name="{container_name}",cpu="total"}}[1m]))'
         )
-        if cpu_limit <= 0.0:
+        if usage <= 0.0:
+            usage = self._client.query_scalar(
+                "max(rate(container_cpu_usage_seconds_total"
+                f'{{name="{container_name}"}}[1m]))'
+            )
+        measured_limit = self._query_cpu_limit_cores(container_name)
+        limit = measured_limit if measured_limit > 0.0 else cpu_limit
+        return cpu_utilization_ratio(usage, limit)
+
+    def _query_cpu_limit_cores(self, container_name: str) -> float:
+        quota = self._client.query_scalar(
+            f'max(container_spec_cpu_quota{{name="{container_name}"}})'
+        )
+        period = self._client.query_scalar(
+            f'max(container_spec_cpu_period{{name="{container_name}"}})'
+        )
+        if quota <= 0.0 or period <= 0.0:
             return 0.0
-        return min(usage / cpu_limit, 1.0)
+        return quota / period
 
     def _query_cpu_throttling(self, container_name: str) -> float:
         throttled = self._client.query_scalar(

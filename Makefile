@@ -202,6 +202,12 @@ down:
 	@make down-cadvisor
 	@find uploads -mindepth 1 -maxdepth 1 ! -name .gitignore -exec rm -rf -- {} +
 
+restart:
+	@make down
+	@make build-env-prod
+	@make build
+	@make up
+
 logs-server:
 	@cd server && docker-compose logs -f
 

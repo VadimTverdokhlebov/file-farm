@@ -161,6 +161,10 @@ class AMPPORLModel(nn.Module):
         if len(self._rollout) >= self._rollout_size:
             self._update_policy()
 
+    def discard_rollout(self) -> None:
+        # Idle gaps must not be stitched into the next loaded trajectory.
+        self._rollout.clear()
+
     def _distribution(self, states: torch.Tensor) -> Normal:
         means = self._actor_forward(states)
         standard_deviations = self._log_std.clamp(-5.0, 1.0).exp().expand_as(means)

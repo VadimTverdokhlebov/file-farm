@@ -33,4 +33,4 @@ EXPOSE 50051 9092
 
 ENV WORKERS=1
 
-CMD pm2-runtime start build/server.js -i $WORKERS
+CMD ["pm2-runtime", "start", "build/server.js"]

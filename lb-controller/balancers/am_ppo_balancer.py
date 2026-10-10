@@ -1,12 +1,16 @@
 import logging
+import math
 
 from config import (
     AM_PPO_CLIP_EPSILON,
+    AM_PPO_CPU_SATURATION,
     AM_PPO_ENTROPY_COEFFICIENT,
     AM_PPO_GAE_LAMBDA,
     AM_PPO_GAMMA,
     AM_PPO_LATENCY_SLA_SECONDS,
     AM_PPO_LEARNING_RATE,
+    AM_PPO_MIN_TRAINING_RPS,
+    AM_PPO_REWARD_BALANCE_WEIGHT,
     AM_PPO_REWARD_CHURN_WEIGHT,
     AM_PPO_REWARD_CPU_WEIGHT,
     AM_PPO_REWARD_ERROR_WEIGHT,
@@ -35,9 +39,12 @@ class AMPPOBalancer(Balancer):
         model: AMPPORLModel | None = None,
         weight_total: int = 1000,
         latency_sla_seconds: float = AM_PPO_LATENCY_SLA_SECONDS,
+        cpu_saturation: float = AM_PPO_CPU_SATURATION,
+        min_training_rps: float = AM_PPO_MIN_TRAINING_RPS,
         latency_weight: float = AM_PPO_REWARD_LATENCY_WEIGHT,
         error_weight: float = AM_PPO_REWARD_ERROR_WEIGHT,
         cpu_weight: float = AM_PPO_REWARD_CPU_WEIGHT,
+        balance_weight: float = AM_PPO_REWARD_BALANCE_WEIGHT,
         churn_weight: float = AM_PPO_REWARD_CHURN_WEIGHT,
     ) -> None:
         if not backends:
@@ -46,13 +53,22 @@ class AMPPOBalancer(Balancer):
             raise ValueError("weight_total must be at least the backend count")
         if latency_sla_seconds <= 0.0:
             raise ValueError("latency_sla_seconds must be positive")
+        if not 0.0 <= cpu_saturation < 1.0:
+            raise ValueError("cpu_saturation must be in [0, 1)")
+        if min_training_rps < 0.0:
+            raise ValueError("min_training_rps must be non-negative")
+        if balance_weight < 0.0:
+            raise ValueError("balance_weight must be non-negative")
 
         self._backends = backends
         self._weight_total = weight_total
         self._latency_sla_seconds = latency_sla_seconds
+        self._cpu_saturation = cpu_saturation
+        self._min_training_rps = min_training_rps
         self._latency_weight = latency_weight
         self._error_weight = error_weight
         self._cpu_weight = cpu_weight
+        self._balance_weight = balance_weight
         self._churn_weight = churn_weight
         self._current_weights = equal_eds_weights(backends, weight_total=weight_total)
         self._metrics_source = metrics_source
@@ -73,9 +89,17 @@ class AMPPOBalancer(Balancer):
         state = self._metrics_source.fetch(self._backends, self._current_weights)
         if self._previous_transition is not None:
             previous_state, previous_action, weights_before_action = self._previous_transition
-            reward = self._compute_reward(state, weights_before_action, previous_action.weights)
-            self._model.observe_transition(previous_state, previous_action, reward, state)
-            logger.info("AM-PPO observed transition step=%d reward=%.4f", state.step_index, reward)
+            if self._is_trainable(previous_state) and self._is_trainable(state):
+                reward = self._compute_reward(state, weights_before_action, previous_action.weights)
+                self._model.observe_transition(previous_state, previous_action, reward, state)
+                logger.info("AM-PPO observed transition step=%d reward=%.4f", state.step_index, reward)
+            elif not self._is_trainable(state):
+                self._model.discard_rollout()
+                logger.debug(
+                    "AM-PPO skipped idle transition step=%d rps=%.3f",
+                    state.step_index,
+                    state.cluster_request_rate_rps,
+                )
 
         action = self._model.act(state, self._backends, weight_total=self._weight_total)
         weights_before_action = dict(self._current_weights)
@@ -106,7 +130,11 @@ class AMPPOBalancer(Balancer):
         else:
             error_rate = 0.0
 
-        cpu_penalty = sum(max(server.cpu_utilization - 0.85, 0.0) for server in state.servers)
+        cpu_penalty = sum(
+            max(server.cpu_utilization - self._cpu_saturation, 0.0) for server in state.servers
+        )
+        # Zero when healthy servers sit at the same fraction of their own CPU limit.
+        balance_penalty = _cpu_utilization_spread(state)
         churn = sum(
             abs(current_weights.get(backend.host, 0) - previous_weights.get(backend.host, 0))
             for backend in self._backends
@@ -115,5 +143,20 @@ class AMPPOBalancer(Balancer):
             self._latency_weight * latency_penalty
             + self._error_weight * error_rate
             + self._cpu_weight * cpu_penalty
+            + self._balance_weight * balance_penalty
             + self._churn_weight * churn
         )
+
+    def _is_trainable(self, state: ClusterState) -> bool:
+        return state.cluster_request_rate_rps >= self._min_training_rps
+
+
+def _cpu_utilization_spread(state: ClusterState) -> float:
+    utilizations = [
+        min(max(server.cpu_utilization, 0.0), 1.0)
+        for server in state.servers
+        if server.is_healthy and math.isfinite(server.cpu_utilization)
+    ]
+    if len(utilizations) < 2:
+        return 0.0
+    return max(utilizations) - min(utilizations)
