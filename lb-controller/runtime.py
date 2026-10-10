@@ -9,7 +9,7 @@ ALGORITHMS = (
     {"id": "weighted_round_robin", "name": "Weighted Round Robin"},
     {"id": "ema", "name": "EMA"},
     {"id": "least_request", "name": "Least Request"},
-    {"id": "dqn", "name": "DQN"},
+    {"id": "random_choice", "name": "Random Choice"},
     {"id": "am_ppo", "name": "AM-PPO"},
 )
 

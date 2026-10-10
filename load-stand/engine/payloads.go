@@ -19,6 +19,7 @@ type PayloadBuilder struct {
 	userCounter   atomic.Int64
 	uploadedFiles []string
 	createdLogins []string
+	DeleteMethodDesc *desc.MethodDescriptor
 	mu            sync.RWMutex
 }
 
@@ -68,6 +69,9 @@ func (b *PayloadBuilder) Populate(md *desc.MethodDescriptor, msg *dynamic.Messag
 	case "filefarm.file.FileService/DownloadFile":
 		return b.fillDownload(msg)
 	case "filefarm.file.FileService/DeleteFile":
+		if b.DeleteMethodDesc == nil {
+			b.DeleteMethodDesc = md
+		}
 		return b.fillDeleteFile(msg)
 	case "filefarm.user.UserService/CreateUser":
 		return b.fillCreateUser(msg)
@@ -170,4 +174,13 @@ func (b *PayloadBuilder) fillGetUser(msg *dynamic.Message) error {
 	}
 
 	return msg.TrySetFieldByName("login", login)
+}
+
+func (b *PayloadBuilder) PopAllUploadedFiles() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	files := make([]string, len(b.uploadedFiles))
+	copy(files, b.uploadedFiles)
+	b.uploadedFiles = nil
+	return files
 }

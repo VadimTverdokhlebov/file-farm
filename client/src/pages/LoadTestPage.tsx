@@ -1,12 +1,10 @@
-import React, { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useLoadTest } from '../hooks/useLoadTest';
-import { LoadPreset } from '../types/loadTest';
 import './LoadTestPage.css';
 
 export const LoadTestPage = () => {
   const {
     endpoints,
-    presets,
     algorithms,
     selectedAlgorithm,
     setSelectedAlgorithm,
@@ -21,32 +19,17 @@ export const LoadTestPage = () => {
   const [fileSizeMinKb, setFileSizeMinKb] = useState(128);
   const [fileSizeMaxKb, setFileSizeMaxKb] = useState(1024);
   const [warmupFiles, setWarmupFiles] = useState(20);
-  const [selectedPreset, setSelectedPreset] = useState<string>('mixed-files');
-  const [selectedEndpoints, setSelectedEndpoints] = useState<Set<string>>(new Set());
 
-  const applyPreset = (preset: LoadPreset) => {
-    setSelectedPreset(preset.id);
-    setSelectedEndpoints(new Set(preset.endpoints));
-    setFileSizeMinKb(preset.fileSizeKb || 128);
-    setFileSizeMaxKb(preset.fileSizeKb || 128);
-    setWarmupFiles(preset.warmupFiles || 0);
-  };
-
-  const handleEndpointChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { value, checked } = e.target;
-    const newSet = new Set(selectedEndpoints);
-    if (checked) {
-      newSet.add(value);
-    } else {
-      newSet.delete(value);
+  // Automatically select the first algorithm if not selected yet
+  useEffect(() => {
+    if (algorithms.length > 0 && !selectedAlgorithm) {
+      setSelectedAlgorithm(algorithms[0].id);
     }
-    setSelectedEndpoints(newSet);
-    setSelectedPreset('');
-  };
+  }, [algorithms, selectedAlgorithm, setSelectedAlgorithm]);
 
   const handleStart = () => {
-    if (selectedEndpoints.size === 0) {
-      alert('Select at least one endpoint or choose a preset');
+    if (endpoints.length === 0) {
+      alert('No endpoints available to test. Check that load stand is running.');
       return;
     }
     if (!selectedAlgorithm) {
@@ -61,9 +44,8 @@ export const LoadTestPage = () => {
     startTest({
       concurrency,
       duration,
-      endpoints: Array.from(selectedEndpoints),
+      endpoints: endpoints, // Use all endpoints
       algorithm: selectedAlgorithm,
-      preset: selectedPreset || undefined,
       fileSizeMinKb,
       fileSizeMaxKb,
       warmupFiles,
@@ -75,7 +57,7 @@ export const LoadTestPage = () => {
       <div className="form-container">
         <h1>Load Test Control Panel</h1>
         <p className="hint">
-          Run a preset, then change Envoy <code>lb_policy</code> and repeat the same test to compare Grafana dashboards.
+          Configure parameters for testing and learning. All available requests will be used. Created files will be automatically deleted.
         </p>
 
         <div className="form-group">
@@ -92,26 +74,8 @@ export const LoadTestPage = () => {
           </select>
         </div>
 
-        <div className="presets-group">
-          <h3>Presets</h3>
-          <div className="presets-grid">
-            {presets.map((preset) => (
-              <button
-                key={preset.id}
-                type="button"
-                className={`preset-card ${selectedPreset === preset.id ? 'preset-card-active' : ''}`}
-                onClick={() => applyPreset(preset)}
-                disabled={status.isRunning}
-              >
-                <strong>{preset.name}</strong>
-                <span>{preset.description}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-
         <div className="form-group">
-          <label htmlFor="concurrency">Concurrent users</label>
+          <label htmlFor="concurrency">Concurrent clients</label>
           <input
             id="concurrency"
             type="number"
@@ -143,10 +107,7 @@ export const LoadTestPage = () => {
               min={1}
               max={47 * 1024}
               value={fileSizeMinKb}
-              onChange={(e) => {
-                setFileSizeMinKb(parseInt(e.target.value, 10) || 1);
-                setSelectedPreset('');
-              }}
+              onChange={(e) => setFileSizeMinKb(parseInt(e.target.value, 10) || 1)}
               disabled={status.isRunning}
             />
           </div>
@@ -159,16 +120,13 @@ export const LoadTestPage = () => {
               min={1}
               max={47 * 1024}
               value={fileSizeMaxKb}
-              onChange={(e) => {
-                setFileSizeMaxKb(parseInt(e.target.value, 10) || 1);
-                setSelectedPreset('');
-              }}
+              onChange={(e) => setFileSizeMaxKb(parseInt(e.target.value, 10) || 1)}
               disabled={status.isRunning}
             />
           </div>
 
           <div className="form-group">
-            <label htmlFor="warmupFiles">Warmup uploads before download</label>
+            <label htmlFor="warmupFiles">Warmup uploads</label>
             <input
               id="warmupFiles"
               type="number"
@@ -180,34 +138,9 @@ export const LoadTestPage = () => {
           </div>
         </div>
 
-        <div className="endpoints-group">
-          <h3>Endpoints</h3>
-          <div className="endpoints-list">
-            {isLoading ? (
-              <p>Loading endpoints...</p>
-            ) : endpoints.length > 0 ? (
-              endpoints.map((ep) => (
-                <div key={ep} className="endpoint-item">
-                  <input
-                    type="checkbox"
-                    id={ep}
-                    value={ep}
-                    checked={selectedEndpoints.has(ep)}
-                    onChange={handleEndpointChange}
-                    disabled={status.isRunning}
-                  />
-                  <label htmlFor={ep}>{ep}</label>
-                </div>
-              ))
-            ) : (
-              <p>No endpoints loaded. Check that load stand is running.</p>
-            )}
-          </div>
-        </div>
-
         <div className="controls">
-          <button onClick={handleStart} disabled={status.isRunning}>Start test</button>
-          <button onClick={stopTest} disabled={!status.isRunning}>Stop test</button>
+          <button onClick={handleStart} disabled={status.isRunning}>Start learning / testing</button>
+          <button onClick={stopTest} disabled={!status.isRunning}>Stop</button>
         </div>
       </div>
 
@@ -219,7 +152,7 @@ export const LoadTestPage = () => {
           <p>Failed requests: <span>{status.stats.failedRequests || 0}</span></p>
         </div>
 
-        {!status.isRunning && status.stats.report && (
+        {status.stats.report && (
           <section className="completion-report" aria-live="polite">
             <h3>Test report</h3>
             <div className="report-grid">

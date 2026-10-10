@@ -72,6 +72,7 @@ type Engine struct {
 	loadBalancerURL  string
 	testStartedAt    time.Time
 	backendCounters  map[string]envoyEndpointCounters
+	builder          *PayloadBuilder
 }
 
 func NewEngine(target string, protoDir string, envoyAdminURL string, loadBalancerURL string) (*Engine, error) {
@@ -234,6 +235,7 @@ func (e *Engine) StartTest(rawConfig TestConfig) error {
 	}
 
 	builder := NewPayloadBuilder(config.FileSizeMinKB, config.FileSizeMaxKB)
+	e.builder = builder
 	if err := e.runWarmup(ctx, methodDescriptors, config, builder); err != nil {
 		log.Printf("Warmup warning: %v", err)
 	}
@@ -267,6 +269,19 @@ func (e *Engine) StartTest(rawConfig TestConfig) error {
 			}
 		}()
 	}
+
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				e.updateReport()
+			}
+		}
+	}()
 
 	go func() {
 		wg.Wait()
@@ -392,8 +407,27 @@ func (e *Engine) finishTest() {
 	e.stats.Report = &report
 	e.isRunning = false
 	e.cancelFunc = nil
+	builder := e.builder
+	e.builder = nil
 	e.mu.Unlock()
 	metrics.SetTestStopped()
+
+	if builder != nil && builder.DeleteMethodDesc != nil {
+		filesToDelete := builder.PopAllUploadedFiles()
+		if len(filesToDelete) > 0 {
+			log.Printf("Cleaning up %d remaining files after test in background...", len(filesToDelete))
+			go func() {
+				cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				defer cancel()
+				for _, filename := range filesToDelete {
+					req := dynamic.NewMessage(builder.DeleteMethodDesc.GetInputType())
+					req.TrySetFieldByName("filename", filename)
+					_, _ = e.stub.InvokeRpc(cleanupCtx, builder.DeleteMethodDesc, req)
+				}
+				log.Printf("Cleanup finished")
+			}()
+		}
+	}
 	log.Printf(
 		"Test completed: RPS=%.2f p50=%.2fms p99=%.2fms errors=%.2f%% Jain=%.4f (available=%t)",
 		report.RPS,
