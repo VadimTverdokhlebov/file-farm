@@ -1,275 +1,207 @@
-import { useState, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
-import { handleUploadFile, handleDownloadFile, handleCompressFile } from '../api/fileService';
+import { formatBytes } from '../api/codec';
+import { FileNotice, SessionFile, useFiles } from '../hooks/useFiles';
 import './FilesPage.css';
 
 export const FilesPage = () => {
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [downloadFileName, setDownloadFileName] = useState('');
-  const [uploadStatus, setUploadStatus] = useState<string | null>(null);
-  const [downloadStatus, setDownloadStatus] = useState<string | null>(null);
-  const [selectedCompressFile, setSelectedCompressFile] = useState<File | null>(null);
-  const [compressedFileStatus, setCompressedFileStatus] = useState<string | null>(null);
-  const [loadingCompressed, setLoadingCompressed] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const compressFileInputRef = useRef<HTMLInputElement>(null);
-  const downloadLinkRef = useRef<HTMLAnchorElement>(null);
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setSelectedFile(file);
-      setUploadStatus(null);
-    }
-  };
-
-  const handleCompressFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setSelectedCompressFile(file);
-      setCompressedFileStatus(null);
-    }
-  };
-
-  const handleUpload = async () => {
-    if (!selectedFile) {
-      setUploadStatus('Please select a file first');
-      return;
-    }
-
-    setLoading(true);
-    setUploadStatus(null);
-
-    try {
-      const arrayBuffer = await selectedFile.arrayBuffer();
-      const uint8Array = new Uint8Array(arrayBuffer);
-
-      const response = await handleUploadFile(selectedFile.name, uint8Array, selectedFile.type || 'application/octet-stream');
-
-      if (response.success) {
-        setUploadStatus(`Success: ${response.message}`);
-        setSelectedFile(null);
-        if (fileInputRef.current) {
-          fileInputRef.current.value = '';
-        }
-      } else {
-        setUploadStatus(`Error: ${response.message || 'Upload failed'}`);
-      }
-    } catch (error) {
-      setUploadStatus(`Error: ${error instanceof Error ? error.message : 'Failed to upload file'}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDownload = async () => {
-    if (!downloadFileName.trim()) {
-      setDownloadStatus('Please enter a file name');
-      return;
-    }
-
-    setLoading(true);
-    setDownloadStatus(null);
-
-    try {
-      const content = await handleDownloadFile(downloadFileName);
-      
-      if (!content || content.length === 0) {
-        setDownloadStatus('File not found or empty');
-        return;
-      }
-
-      // Create blob and trigger download
-      // Convert Uint8Array to ArrayBuffer for Blob compatibility
-      const arrayBuffer = content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength) as ArrayBuffer;
-      const blob = new Blob([arrayBuffer]);
-      const url = URL.createObjectURL(blob);
-      if (downloadLinkRef.current) {
-        downloadLinkRef.current.href = url;
-        downloadLinkRef.current.download = downloadFileName;
-        downloadLinkRef.current.click();
-        URL.revokeObjectURL(url);
-      }
-      setDownloadStatus(`Success: File ${downloadFileName} downloaded`);
-      setDownloadFileName('');
-    } catch (error) {
-      setDownloadStatus(`Error: ${error instanceof Error ? error.message : 'Failed to download file'}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-const handleCompress = async () => {
-  const fileToCompress = selectedCompressFile; 
-
-  if (!fileToCompress) {
-    setCompressedFileStatus('Please select a file first');
-    return;
-  }
-
-  setLoadingCompressed(true);
-  setCompressedFileStatus(null);
-
-  try {
-    const arrayBuffer = await fileToCompress.arrayBuffer();
-    const uint8Array = new Uint8Array(arrayBuffer);
-
-    const response = await handleCompressFile(
-      fileToCompress.name, 
-      uint8Array, 
-      fileToCompress.type || 'application/octet-stream'
-    );
-
-    if (!response.compressedContent || response.compressedContent.length === 0) {
-      setCompressedFileStatus('File not found or empty');
-      return;
-    }
-
-    if (response.success) {
-      setCompressedFileStatus(`Success: ${response.message}`);
-      
-      const base64Content = response.compressedContent;
-      const binaryString = atob(base64Content);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-
-      const blob = new Blob([bytes], { type: 'application/gzip' }); 
-      const url = URL.createObjectURL(blob);
-
-      if (downloadLinkRef.current) {
-        const originalName = fileToCompress.name;
-        const newFileName = `${originalName.split('.')[0]}_compressed.${originalName.split('.').pop()}.gz`;
-        downloadLinkRef.current.href = url;
-        downloadLinkRef.current.download = newFileName; 
-        downloadLinkRef.current.click();
-        
-        URL.revokeObjectURL(url);
-      }
-
-      setSelectedCompressFile(null);
-      if (compressFileInputRef.current) {
-        compressFileInputRef.current.value = '';
-      }
-
-    } else {
-      setCompressedFileStatus(`Error: ${response.message || 'Upload failed'}`);
-    }
-  } catch (error) {
-    setCompressedFileStatus(`Error: ${error instanceof Error ? error.message : 'Failed to compress file'}`);
-  } finally {
-    setLoadingCompressed(false);
-  }
-};
+  const files = useFiles();
+  const busy = files.pending !== null;
 
   return (
     <div className="files-page">
-      <div className="files-container">
-        <div className="header">
-          <h1>File Farm</h1>
+      <div className="files-shell">
+        <header className="files-header">
+          <div>
+            <p className="files-kicker">File Farm</p>
+            <h1>Files</h1>
+            <p className="files-lead">
+              Upload a file to the cluster, compress one without storing it, or download and delete a stored file by name.
+            </p>
+          </div>
+          <Link className="files-nav" to="/load-test">Load test</Link>
+        </header>
+
+        <div className="files-grid">
+          <FileActionCard
+            title="Upload"
+            description="The file is stored and can be downloaded or deleted later."
+            inputId="upload-file"
+            inputKey={files.uploadInputKey}
+            file={files.uploadSelection}
+            onSelect={files.setUploadSelection}
+            actionLabel={files.pending === 'upload' ? 'Uploading...' : 'Upload'}
+            disabled={busy || !files.uploadSelection}
+            onAction={files.upload}
+            notice={files.notices.upload}
+          />
+          <FileActionCard
+            title="Compress"
+            description="Returns a gzip copy. The original is not saved on the server."
+            inputId="compress-file"
+            inputKey={files.compressInputKey}
+            file={files.compressSelection}
+            onSelect={files.setCompressSelection}
+            actionLabel={files.pending === 'compress' ? 'Compressing...' : 'Compress'}
+            disabled={busy || !files.compressSelection}
+            onAction={files.compress}
+            notice={files.notices.compress}
+          />
         </div>
 
-        <div className="sections">
-          <section className="upload-section">
-            <h2>Upload File</h2>
-            <div className="file-input-wrapper">
-              <input
-                ref={fileInputRef}
-                type="file"
-                onChange={handleFileSelect}
-                className="file-input"
-                id="file-input"
-              />
-              <label htmlFor="file-input" className="file-input-label">
-                {selectedFile ? selectedFile.name : 'Choose a file...'}
-              </label>
-            </div>
-            {selectedFile && (
-              <div className="file-info">
-                <p>File: {selectedFile.name}</p>
-                <p>Size: {(selectedFile.size / 1024).toFixed(2)} KB</p>
-                <p>Type: {selectedFile.type || 'Unknown'}</p>
-              </div>
-            )}
-            <Button onClick={handleUpload} disabled={!selectedFile || loading}>
-              {loading ? 'Uploading...' : 'Upload File'}
-            </Button>
-            {uploadStatus && (
-              <div
-                className={`status-message ${
-                  uploadStatus.startsWith('Success') ? 'success' : 'error'
-                }`}
-              >
-                {uploadStatus}
-              </div>
-            )}
-          </section>
+        <section className="files-library">
+          <div className="files-library-head">
+            <h2>Stored files</h2>
+            <p>Files uploaded in this session are listed here. Any other stored name can be used below.</p>
+          </div>
 
-          <section className="upload-section">
-            <h2>Compress File</h2>
-            <div className="file-input-wrapper">
-              <input
-                ref={compressFileInputRef}
-                type="file"
-                onChange={handleCompressFileSelect}
-                className="file-input"
-                id="compress-file-input"
-              />
-              <label htmlFor="compress-file-input" className="file-input-label">
-                {selectedCompressFile ? selectedCompressFile.name : 'Choose a file...'}
-              </label>
-            </div>
-            {selectedCompressFile && (
-              <div className="file-info">
-                <p>File: {selectedCompressFile.name}</p>
-                <p>Size: {(selectedCompressFile.size / 1024).toFixed(2)} KB</p>
-                <p>Type: {selectedCompressFile.type || 'Unknown'}</p>
-              </div>
-            )}
-            <Button onClick={handleCompress} disabled={!selectedCompressFile || loadingCompressed}>
-              {loadingCompressed ? 'Compressing...' : 'Compress File'}
-            </Button>
-            {compressedFileStatus && (
-              <div
-                className={`status-message ${
-                  compressedFileStatus.startsWith('Success') ? 'success' : 'error'
-                }`}
-              >
-                {compressedFileStatus}
-              </div>
-            )}
-          </section>
+          {files.sessionFiles.length === 0 ? (
+            <p className="files-empty">No files uploaded in this session yet.</p>
+          ) : (
+            <ul className="files-list">
+              {files.sessionFiles.map((file) => (
+                <SessionFileRow
+                  key={file.name}
+                  file={file}
+                  busy={busy}
+                  pending={files.pending}
+                  onDownload={() => files.download(file.name)}
+                  onDelete={() => files.askDelete(file.name)}
+                />
+              ))}
+            </ul>
+          )}
 
-          <section className="download-section">
-            <h2>Download File</h2>
+          <div className="files-lookup">
             <Input
-              type="text"
-              placeholder="Enter file name to download"
-              value={downloadFileName}
-              onChange={setDownloadFileName}
-              label="File Name"
+              label="File name"
+              placeholder="Stored file name"
+              value={files.filename}
+              onChange={files.setFilename}
             />
-            <Button onClick={handleDownload} disabled={!downloadFileName || loading}>
-              {loading ? 'Downloading...' : 'Download File'}
-            </Button>
-            {downloadStatus && (
-              <div
-                className={`status-message ${
-                  downloadStatus.startsWith('Success') ? 'success' : 'error'
-                }`}
+            <div className="files-lookup-actions">
+              <Button onClick={() => files.download(files.filename)} disabled={busy || !files.filename.trim()}>
+                {files.pending === `download:${files.filename.trim()}` ? 'Downloading...' : 'Download'}
+              </Button>
+              <Button
+                variant="danger"
+                onClick={() => files.askDelete(files.filename)}
+                disabled={busy || !files.filename.trim()}
               >
-                {downloadStatus}
-              </div>
-            )}
-          </section>
-        </div>
-      </div>
+                Delete
+              </Button>
+            </div>
+          </div>
 
-      <a ref={downloadLinkRef} style={{ display: 'none' }} />
+          {files.deleteTarget && (
+            <div className="files-confirm">
+              <p>Delete <strong>{files.deleteTarget}</strong> from the cluster?</p>
+              <div className="files-lookup-actions">
+                <Button variant="danger" onClick={files.confirmDelete} disabled={busy}>
+                  {files.pending?.startsWith('delete:') ? 'Deleting...' : 'Delete file'}
+                </Button>
+                <Button variant="secondary" onClick={files.cancelDelete} disabled={busy}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
+
+          <Notice notice={files.notices.lookup} />
+        </section>
+      </div>
     </div>
   );
 };
 
+type FileActionCardProps = {
+  title: string;
+  description: string;
+  inputId: string;
+  inputKey: number;
+  file: File | null;
+  onSelect: (file: File | null) => void;
+  actionLabel: string;
+  disabled: boolean;
+  onAction: () => void;
+  notice?: FileNotice | null;
+};
+
+function FileActionCard({
+  title,
+  description,
+  inputId,
+  inputKey,
+  file,
+  onSelect,
+  actionLabel,
+  disabled,
+  onAction,
+  notice,
+}: FileActionCardProps) {
+  return (
+    <section className="files-card">
+      <h2>{title}</h2>
+      <p className="files-card-copy">{description}</p>
+      <label className="files-drop" htmlFor={inputId}>
+        <span>{file ? file.name : 'Choose a file'}</span>
+        <input
+          key={inputKey}
+          id={inputId}
+          type="file"
+          onChange={(event) => onSelect(event.target.files?.[0] ?? null)}
+        />
+      </label>
+      {file && (
+        <p className="files-meta">
+          {formatBytes(file.size)} · {file.type || 'Unknown type'}
+        </p>
+      )}
+      <Button onClick={onAction} disabled={disabled}>{actionLabel}</Button>
+      <Notice notice={notice} />
+    </section>
+  );
+}
+
+function SessionFileRow({
+  file,
+  busy,
+  pending,
+  onDownload,
+  onDelete,
+}: {
+  file: SessionFile;
+  busy: boolean;
+  pending: string | null;
+  onDownload: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <li className="files-row">
+      <div>
+        <p className="files-row-name">{file.name}</p>
+        <p className="files-meta">{formatBytes(file.size)} · {file.type}</p>
+      </div>
+      <div className="files-row-actions">
+        <Button
+          variant="secondary"
+          onClick={onDownload}
+          disabled={busy}
+        >
+          {pending === `download:${file.name}` ? 'Downloading...' : 'Download'}
+        </Button>
+        <Button variant="danger" onClick={onDelete} disabled={busy}>
+          Delete
+        </Button>
+      </div>
+    </li>
+  );
+}
+
+function Notice({ notice }: { notice?: FileNotice | null }) {
+  if (!notice) {
+    return null;
+  }
+  return <p className={`files-notice files-notice-${notice.tone}`}>{notice.text}</p>;
+}

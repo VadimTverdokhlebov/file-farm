@@ -26,6 +26,15 @@
   background-color: #545b62;
 }
 
+.btn-danger {
+  background-color: #b42318;
+  color: white;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background-color: #8e1b13;
+}
+
 .btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;

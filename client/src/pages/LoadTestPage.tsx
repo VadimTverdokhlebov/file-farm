@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
+import { Button } from '../components/Button';
 import { useLoadTest } from '../hooks/useLoadTest';
 import './LoadTestPage.css';
 
@@ -19,8 +21,8 @@ export const LoadTestPage = () => {
   const [fileSizeMinKb, setFileSizeMinKb] = useState(128);
   const [fileSizeMaxKb, setFileSizeMaxKb] = useState(1024);
   const [warmupFiles, setWarmupFiles] = useState(20);
+  const [formError, setFormError] = useState<string | null>(null);
 
-  // Automatically select the first algorithm if not selected yet
   useEffect(() => {
     if (algorithms.length > 0 && !selectedAlgorithm) {
       setSelectedAlgorithm(algorithms[0].id);
@@ -29,22 +31,23 @@ export const LoadTestPage = () => {
 
   const handleStart = () => {
     if (endpoints.length === 0) {
-      alert('No endpoints available to test. Check that load stand is running.');
+      setFormError('No endpoints available. Check that the load stand is running.');
       return;
     }
     if (!selectedAlgorithm) {
-      alert('Select a load-balancing algorithm');
+      setFormError('Select a load-balancing algorithm.');
       return;
     }
     if (fileSizeMinKb < 1 || fileSizeMaxKb < fileSizeMinKb || fileSizeMaxKb > 47 * 1024) {
-      alert('File size range must be between 1 KB and 47 MB, with minimum no greater than maximum');
+      setFormError('File size must be between 1 KB and 47 MB, and the minimum cannot exceed the maximum.');
       return;
     }
 
+    setFormError(null);
     startTest({
       concurrency,
       duration,
-      endpoints: endpoints, // Use all endpoints
+      endpoints,
       algorithm: selectedAlgorithm,
       fileSizeMinKb,
       fileSizeMaxKb,
@@ -52,202 +55,243 @@ export const LoadTestPage = () => {
     });
   };
 
+  const servers = status.stats.Servers ?? [];
+  const endpointEntries = Object.entries(status.stats.endpointStats ?? {});
+
   return (
-    <div className="dashboard">
-      <div className="form-container">
-        <h1>Load Test Control Panel</h1>
-        <p className="hint">
-          Configure parameters for testing and learning. All available requests will be used. Created files will be automatically deleted.
-        </p>
+    <div className="load-page">
+      <div className="load-shell">
+        <header className="load-header">
+          <div>
+            <p className="load-kicker">File Farm</p>
+            <h1>Load test</h1>
+            <p className="load-lead">
+              Configure a run for testing and learning. Every available request is used, and files created by the test are deleted afterwards.
+            </p>
+          </div>
+          <Link className="load-nav" to="/">Files</Link>
+        </header>
 
-        <div className="form-group">
-          <label htmlFor="algorithm">Load-balancing algorithm</label>
-          <select
-            id="algorithm"
-            value={selectedAlgorithm}
-            onChange={(e) => setSelectedAlgorithm(e.target.value)}
-            disabled={status.isRunning || isLoading}
-          >
-            {algorithms.map((algorithm) => (
-              <option key={algorithm.id} value={algorithm.id}>{algorithm.name}</option>
-            ))}
-          </select>
-        </div>
+        <section className="load-card">
+          <h2>Run</h2>
+          <p className="load-copy">The selected algorithm is applied by the load balancer before the test starts.</p>
 
-        <div className="form-group">
-          <label htmlFor="concurrency">Concurrent clients</label>
-          <input
-            id="concurrency"
-            type="number"
-            min={1}
-            value={concurrency}
-            onChange={(e) => setConcurrency(parseInt(e.target.value, 10) || 1)}
-            disabled={status.isRunning}
-          />
-        </div>
+          <div className="load-fields">
+            <label className="load-field load-field-wide" htmlFor="algorithm">
+              Load-balancing algorithm
+              <select
+                id="algorithm"
+                value={selectedAlgorithm}
+                onChange={(event) => setSelectedAlgorithm(event.target.value)}
+                disabled={status.isRunning || isLoading}
+              >
+                {algorithms.map((algorithm) => (
+                  <option key={algorithm.id} value={algorithm.id}>{algorithm.name}</option>
+                ))}
+              </select>
+            </label>
 
-        <div className="form-group">
-          <label htmlFor="duration">Duration (seconds, 0 = infinite)</label>
-          <input
-            id="duration"
-            type="number"
-            min={0}
-            value={duration}
-            onChange={(e) => setDuration(parseInt(e.target.value, 10) || 0)}
-            disabled={status.isRunning}
-          />
-        </div>
-
-        <div className="form-row">
-          <div className="form-group">
-            <label htmlFor="fileSizeMinKb">Minimum file size (KB)</label>
-            <input
+            <NumberField
+              id="concurrency"
+              label="Concurrent clients"
+              min={1}
+              value={concurrency}
+              disabled={status.isRunning}
+              onChange={setConcurrency}
+            />
+            <NumberField
+              id="duration"
+              label="Duration, seconds (0 = infinite)"
+              min={0}
+              value={duration}
+              disabled={status.isRunning}
+              onChange={setDuration}
+            />
+            <NumberField
               id="fileSizeMinKb"
-              type="number"
+              label="Minimum file size, KB"
               min={1}
               max={47 * 1024}
               value={fileSizeMinKb}
-              onChange={(e) => setFileSizeMinKb(parseInt(e.target.value, 10) || 1)}
               disabled={status.isRunning}
+              onChange={setFileSizeMinKb}
             />
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="fileSizeMaxKb">Maximum file size (KB)</label>
-            <input
+            <NumberField
               id="fileSizeMaxKb"
-              type="number"
+              label="Maximum file size, KB"
               min={1}
               max={47 * 1024}
               value={fileSizeMaxKb}
-              onChange={(e) => setFileSizeMaxKb(parseInt(e.target.value, 10) || 1)}
               disabled={status.isRunning}
+              onChange={setFileSizeMaxKb}
             />
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="warmupFiles">Warmup uploads</label>
-            <input
+            <NumberField
               id="warmupFiles"
-              type="number"
+              label="Warmup uploads"
               min={0}
               value={warmupFiles}
-              onChange={(e) => setWarmupFiles(parseInt(e.target.value, 10) || 0)}
               disabled={status.isRunning}
+              onChange={setWarmupFiles}
             />
           </div>
-        </div>
 
-        <div className="controls">
-          <button onClick={handleStart} disabled={status.isRunning}>Start learning / testing</button>
-          <button onClick={stopTest} disabled={!status.isRunning}>Stop</button>
-        </div>
-      </div>
+          <div className="load-actions">
+            <Button onClick={handleStart} disabled={status.isRunning}>
+              {status.isRunning ? 'Running...' : 'Start'}
+            </Button>
+            <Button variant="danger" onClick={stopTest} disabled={!status.isRunning}>
+              Stop
+            </Button>
+          </div>
+          {formError && <p className="load-notice load-notice-error">{formError}</p>}
+        </section>
 
-      <div className="status-container">
-        <h2>Live status: {status.isRunning ? 'Running' : 'Stopped'}</h2>
-        {error && <p className="error">Error: {error}</p>}
-        <div className="stats">
-          <p>Successful requests: <span>{status.stats.successfulRequests || 0}</span></p>
-          <p>Failed requests: <span>{status.stats.failedRequests || 0}</span></p>
-        </div>
+        <section className="load-card">
+          <div className="load-card-title">
+            <h2>Live status</h2>
+            <span className={`load-pill ${status.isRunning ? 'load-pill-up' : 'load-pill-idle'}`}>
+              {status.isRunning ? 'Running' : 'Stopped'}
+            </span>
+          </div>
+          {error && <p className="load-notice load-notice-error">{error}</p>}
+          <div className="load-stats">
+            <div>
+              <span>Successful requests</span>
+              <strong>{status.stats.successfulRequests || 0}</strong>
+            </div>
+            <div>
+              <span>Failed requests</span>
+              <strong>{status.stats.failedRequests || 0}</strong>
+            </div>
+          </div>
 
-        {status.stats.report && (
-          <section className="completion-report" aria-live="polite">
-            <h3>Test report</h3>
-            <div className="report-grid">
-              <div className="report-metric">
-                <span>RPS ↑</span>
-                <strong>{status.stats.report.rps.toFixed(2)}</strong>
-              </div>
-              <div className="report-metric">
-                <span>p50, мс ↓</span>
-                <strong>{status.stats.report.p50Millis.toFixed(2)}</strong>
-              </div>
-              <div className="report-metric">
-                <span>p99, мс ↓</span>
-                <strong>{status.stats.report.p99Millis.toFixed(2)}</strong>
-              </div>
-              <div className="report-metric">
-                <span>Ошибки, % ↓</span>
-                <strong>{status.stats.report.errorRatePercent.toFixed(2)}%</strong>
-              </div>
-              <div className="report-metric">
-                <span>Jain</span>
-                <strong>
-                  {status.stats.report.jainAvailable
-                    ? status.stats.report.jainIndex.toFixed(3)
-                    : 'N/A'}
-                </strong>
+          {status.stats.report && (
+            <div className="load-report">
+              <h3>Test report</h3>
+              <div className="load-report-grid">
+                <Metric label="RPS ↑" value={status.stats.report.rps.toFixed(2)} />
+                <Metric label="p50, ms ↓" value={status.stats.report.p50Millis.toFixed(2)} />
+                <Metric label="p99, ms ↓" value={status.stats.report.p99Millis.toFixed(2)} />
+                <Metric label="Errors, % ↓" value={`${status.stats.report.errorRatePercent.toFixed(2)}%`} />
+                <Metric
+                  label="Jain"
+                  value={status.stats.report.jainAvailable ? status.stats.report.jainIndex.toFixed(3) : 'N/A'}
+                />
               </div>
             </div>
-          </section>
-        )}
-      </div>
+          )}
+        </section>
 
-      <div className="status-container server-stats">
-        <h2>Server status</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>Server</th>
-              <th>RPS</th>
-              <th>Error</th>
-              <th>EDS</th>
-              <th>Mem</th>
-              <th>RAM</th>
-              <th>CPU</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(status.stats.Servers ?? []).map((server) => (
-              <tr key={server.name} className={server.status === 'up' ? '' : 'server-down'}>
-                <td>{server.name}</td>
-                <td>{server.rps?.toFixed(1) || '0.0'}</td>
-                <td className={(server.error || 0) > 0 ? 'text-danger' : ''}>
-                  {server.error?.toFixed(2) || '0.0'}%
-                </td>
-                <td>{server.eds || 0}</td>
-                <td>{server.mem?.toFixed(1) || '0.0'} MB</td>
-                <td>{server.ram?.toFixed(1) || '0.0'}%</td>
-                <td>{server.cpu?.toFixed(1) || '0.0'}%</td>
-                <td>
-                  <span className={`status-badge ${server.status === 'up' ? 'up' : 'down'}`}>
-                    {server.status === 'up' ? 'Online' : 'Offline'}
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="status-container endpoint-stats">
-        <h2>Per endpoint</h2>
-        {status.stats.endpointStats && Object.keys(status.stats.endpointStats).length > 0 ? (
-          <table>
-            <thead>
-              <tr>
-                <th>Endpoint</th>
-                <th>Success</th>
-                <th>Failed</th>
-              </tr>
-            </thead>
-            <tbody>
-              {Object.entries(status.stats.endpointStats).map(([endpoint, stats]) => (
-                <tr key={endpoint}>
-                  <td>{endpoint}</td>
-                  <td>{stats.successfulRequests}</td>
-                  <td>{stats.failedRequests}</td>
+        <section className="load-card">
+          <h2>Server status</h2>
+          <div className="load-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Server</th>
+                  <th>RPS</th>
+                  <th>Error</th>
+                  <th>EDS</th>
+                  <th>Mem</th>
+                  <th>RAM</th>
+                  <th>CPU</th>
+                  <th>Status</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <p className="empty-note">Per-endpoint counts appear after a test starts.</p>
-        )}
+              </thead>
+              <tbody>
+                {servers.map((server) => (
+                  <tr key={server.name} className={server.status === 'up' ? '' : 'load-row-down'}>
+                    <td>{server.name}</td>
+                    <td>{server.rps?.toFixed(1) || '0.0'}</td>
+                    <td className={(server.error || 0) > 0 ? 'load-danger' : ''}>
+                      {server.error?.toFixed(2) || '0.0'}%
+                    </td>
+                    <td>{server.eds || 0}</td>
+                    <td>{server.mem?.toFixed(1) || '0.0'} MB</td>
+                    <td>{server.ram?.toFixed(1) || '0.0'}%</td>
+                    <td>{server.cpu?.toFixed(1) || '0.0'}%</td>
+                    <td>
+                      <span className={`load-pill ${server.status === 'up' ? 'load-pill-up' : 'load-pill-down'}`}>
+                        {server.status === 'up' ? 'Online' : 'Offline'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="load-card">
+          <h2>Per endpoint</h2>
+          {endpointEntries.length > 0 ? (
+            <div className="load-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Endpoint</th>
+                    <th>Success</th>
+                    <th>Failed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {endpointEntries.map(([endpoint, stats]) => (
+                    <tr key={endpoint}>
+                      <td>{endpoint}</td>
+                      <td>{stats.successfulRequests}</td>
+                      <td>{stats.failedRequests}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="load-empty">Per-endpoint counts appear after a test starts.</p>
+          )}
+        </section>
       </div>
     </div>
   );
 };
+
+function NumberField({
+  id,
+  label,
+  value,
+  min,
+  max,
+  disabled,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: number;
+  min: number;
+  max?: number;
+  disabled: boolean;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="load-field" htmlFor={id}>
+      {label}
+      <input
+        id={id}
+        type="number"
+        min={min}
+        max={max}
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(parseInt(event.target.value, 10) || min)}
+      />
+    </label>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="load-metric">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}

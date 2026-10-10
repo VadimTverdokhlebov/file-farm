@@ -12,6 +12,28 @@ import type { PartialMessage } from "@protobuf-ts/runtime";
 import { reflectionMergePartial } from "@protobuf-ts/runtime";
 import { MessageType } from "@protobuf-ts/runtime";
 /**
+ * @generated from protobuf message filefarm.file.DeleteFileRequest
+ */
+export interface DeleteFileRequest {
+    /**
+     * @generated from protobuf field: string filename = 1
+     */
+    filename: string;
+}
+/**
+ * @generated from protobuf message filefarm.file.DeleteFileResponse
+ */
+export interface DeleteFileResponse {
+    /**
+     * @generated from protobuf field: string message = 1
+     */
+    message: string;
+    /**
+     * @generated from protobuf field: bool success = 2
+     */
+    success: boolean;
+}
+/**
  * @generated from protobuf message filefarm.file.UploadFileRequest
  */
 export interface UploadFileRequest {
@@ -101,6 +123,108 @@ export interface CompressFileResponse {
      */
     compressedContent: string;
 }
+// @generated message type with reflection information, may provide speed optimized methods
+class DeleteFileRequest$Type extends MessageType<DeleteFileRequest> {
+    constructor() {
+        super("filefarm.file.DeleteFileRequest", [
+            { no: 1, name: "filename", kind: "scalar", T: 9 /*ScalarType.STRING*/ }
+        ]);
+    }
+    create(value?: PartialMessage<DeleteFileRequest>): DeleteFileRequest {
+        const message = globalThis.Object.create((this.messagePrototype!));
+        message.filename = "";
+        if (value !== undefined)
+            reflectionMergePartial<DeleteFileRequest>(this, message, value);
+        return message;
+    }
+    internalBinaryRead(reader: IBinaryReader, length: number, options: BinaryReadOptions, target?: DeleteFileRequest): DeleteFileRequest {
+        let message = target ?? this.create(), end = reader.pos + length;
+        while (reader.pos < end) {
+            let [fieldNo, wireType] = reader.tag();
+            switch (fieldNo) {
+                case /* string filename */ 1:
+                    message.filename = reader.string();
+                    break;
+                default:
+                    let u = options.readUnknownField;
+                    if (u === "throw")
+                        throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+                    let d = reader.skip(wireType);
+                    if (u !== false)
+                        (u === true ? UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+            }
+        }
+        return message;
+    }
+    internalBinaryWrite(message: DeleteFileRequest, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
+        /* string filename = 1; */
+        if (message.filename !== "")
+            writer.tag(1, WireType.LengthDelimited).string(message.filename);
+        let u = options.writeUnknownFields;
+        if (u !== false)
+            (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+        return writer;
+    }
+}
+/**
+ * @generated MessageType for protobuf message filefarm.file.DeleteFileRequest
+ */
+export const DeleteFileRequest = new DeleteFileRequest$Type();
+// @generated message type with reflection information, may provide speed optimized methods
+class DeleteFileResponse$Type extends MessageType<DeleteFileResponse> {
+    constructor() {
+        super("filefarm.file.DeleteFileResponse", [
+            { no: 1, name: "message", kind: "scalar", T: 9 /*ScalarType.STRING*/ },
+            { no: 2, name: "success", kind: "scalar", T: 8 /*ScalarType.BOOL*/ }
+        ]);
+    }
+    create(value?: PartialMessage<DeleteFileResponse>): DeleteFileResponse {
+        const message = globalThis.Object.create((this.messagePrototype!));
+        message.message = "";
+        message.success = false;
+        if (value !== undefined)
+            reflectionMergePartial<DeleteFileResponse>(this, message, value);
+        return message;
+    }
+    internalBinaryRead(reader: IBinaryReader, length: number, options: BinaryReadOptions, target?: DeleteFileResponse): DeleteFileResponse {
+        let message = target ?? this.create(), end = reader.pos + length;
+        while (reader.pos < end) {
+            let [fieldNo, wireType] = reader.tag();
+            switch (fieldNo) {
+                case /* string message */ 1:
+                    message.message = reader.string();
+                    break;
+                case /* bool success */ 2:
+                    message.success = reader.bool();
+                    break;
+                default:
+                    let u = options.readUnknownField;
+                    if (u === "throw")
+                        throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+                    let d = reader.skip(wireType);
+                    if (u !== false)
+                        (u === true ? UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+            }
+        }
+        return message;
+    }
+    internalBinaryWrite(message: DeleteFileResponse, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
+        /* string message = 1; */
+        if (message.message !== "")
+            writer.tag(1, WireType.LengthDelimited).string(message.message);
+        /* bool success = 2; */
+        if (message.success !== false)
+            writer.tag(2, WireType.Varint).bool(message.success);
+        let u = options.writeUnknownFields;
+        if (u !== false)
+            (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+        return writer;
+    }
+}
+/**
+ * @generated MessageType for protobuf message filefarm.file.DeleteFileResponse
+ */
+export const DeleteFileResponse = new DeleteFileResponse$Type();
 // @generated message type with reflection information, may provide speed optimized methods
 class UploadFileRequest$Type extends MessageType<UploadFileRequest> {
     constructor() {
@@ -461,5 +585,6 @@ export const CompressFileResponse = new CompressFileResponse$Type();
 export const FileService = new ServiceType("filefarm.file.FileService", [
     { name: "UploadFile", options: {}, I: UploadFileRequest, O: UploadFileResponse },
     { name: "DownloadFile", options: {}, I: DownloadFileRequest, O: DownloadFileResponse },
+    { name: "DeleteFile", options: {}, I: DeleteFileRequest, O: DeleteFileResponse },
     { name: "CompressFile", options: {}, I: CompressFileRequest, O: CompressFileResponse }
 ]);

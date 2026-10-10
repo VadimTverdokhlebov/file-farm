@@ -1,77 +1,49 @@
 import { fileClient } from '../grpc';
+import { base64ToUint8, uint8ToBase64 } from './codec';
 
-export const handleDownloadFile = async (filename: string): Promise<Uint8Array> => {
+const DEFAULT_MIME = 'application/octet-stream';
+
+async function readFile(file: File): Promise<{ filename: string; content: string; mimetype: string }> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  return {
+    filename: file.name,
+    content: uint8ToBase64(bytes),
+    mimetype: file.type || DEFAULT_MIME,
+  };
+}
+
+export async function uploadFile(file: File): Promise<string> {
+  const response = await fileClient.uploadFile(await readFile(file));
+  if (!response.response.success) {
+    throw new Error(response.response.message || 'Upload failed');
+  }
+  return response.response.message || `Uploaded ${file.name}`;
+}
+
+export async function downloadFile(filename: string): Promise<Uint8Array> {
   const response = await fileClient.downloadFile({ filename });
-  const base64Content = response.response.content as unknown as string;
-  if (!base64Content || base64Content.length === 0) {
+  const content = response.response.content;
+  if (!content) {
     throw new Error('File not found or empty');
   }
-  
-  // Decode base64 to Uint8Array
-  const binaryString = atob(base64Content);
-  const bytes = new Uint8Array(binaryString.length);
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes;
-};
+  return base64ToUint8(content);
+}
 
-export const handleUploadFile = async (filename: string, content: Uint8Array, mimetype: string) => {
-  // Encode Uint8Array to base64
-  // Convert Uint8Array to binary string in chunks to avoid stack overflow
-  let binaryString = '';
-  const chunkSize = 8192;
-  for (let i = 0; i < content.length; i += chunkSize) {
-    const chunk = content.slice(i, i + chunkSize);
-    for (let j = 0; j < chunk.length; j++) {
-      binaryString += String.fromCharCode(chunk[j]);
-    }
-  }
-  const base64Content = btoa(binaryString);
-  console.log({ 
-    filename, 
-    content: base64Content, 
-    mimetype 
-  });
-  
-  const response = await fileClient.uploadFile({ 
-    filename, 
-    content: base64Content, 
-    mimetype 
-  });
-
+export async function deleteFile(filename: string): Promise<string> {
+  const response = await fileClient.deleteFile({ filename });
   if (!response.response.success) {
-    throw new Error(response.response.message || 'Upload failed');
+    throw new Error(response.response.message || 'Delete failed');
   }
-  return response.response;
-};
+  return response.response.message || `Deleted ${filename}`;
+}
 
-export const handleCompressFile = async (filename: string, content: Uint8Array, mimetype: string) => {
-  // Encode Uint8Array to base64
-  // Convert Uint8Array to binary string in chunks to avoid stack overflow
-  let binaryString = '';
-  const chunkSize = 8192;
-  for (let i = 0; i < content.length; i += chunkSize) {
-    const chunk = content.slice(i, i + chunkSize);
-    for (let j = 0; j < chunk.length; j++) {
-      binaryString += String.fromCharCode(chunk[j]);
-    }
+export async function compressFile(file: File): Promise<{ message: string; bytes: Uint8Array }> {
+  const response = await fileClient.compressFile(await readFile(file));
+  if (!response.response.success || !response.response.compressedContent) {
+    throw new Error(response.response.message || 'Compress failed');
   }
-  const base64Content = btoa(binaryString);
-  console.log({ 
-    filename, 
-    content: base64Content, 
-    mimetype 
-  });
-  
-  const response = await fileClient.compressFile({ 
-    filename, 
-    content: base64Content, 
-    mimetype 
-  });
-
-  if (!response.response.success) {
-    throw new Error(response.response.message || 'Upload failed');
-  }
-  return response.response;
-};
+  return {
+    message: response.response.message || `Compressed ${file.name}`,
+    bytes: base64ToUint8(response.response.compressedContent),
+  };
+}

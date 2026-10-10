@@ -6,6 +6,8 @@ import type { ServiceInfo } from "@protobuf-ts/runtime-rpc";
 import { FileService } from "./file";
 import type { CompressFileResponse } from "./file";
 import type { CompressFileRequest } from "./file";
+import type { DeleteFileResponse } from "./file";
+import type { DeleteFileRequest } from "./file";
 import type { DownloadFileResponse } from "./file";
 import type { DownloadFileRequest } from "./file";
 import { stackIntercept } from "@protobuf-ts/runtime-rpc";
@@ -25,6 +27,10 @@ export interface IFileServiceClient {
      * @generated from protobuf rpc: DownloadFile
      */
     downloadFile(input: DownloadFileRequest, options?: RpcOptions): UnaryCall<DownloadFileRequest, DownloadFileResponse>;
+    /**
+     * @generated from protobuf rpc: DeleteFile
+     */
+    deleteFile(input: DeleteFileRequest, options?: RpcOptions): UnaryCall<DeleteFileRequest, DeleteFileResponse>;
     /**
      * @generated from protobuf rpc: CompressFile
      */
@@ -54,10 +60,17 @@ export class FileServiceClient implements IFileServiceClient, ServiceInfo {
         return stackIntercept<DownloadFileRequest, DownloadFileResponse>("unary", this._transport, method, opt, input);
     }
     /**
+     * @generated from protobuf rpc: DeleteFile
+     */
+    deleteFile(input: DeleteFileRequest, options?: RpcOptions): UnaryCall<DeleteFileRequest, DeleteFileResponse> {
+        const method = this.methods[2], opt = this._transport.mergeOptions(options);
+        return stackIntercept<DeleteFileRequest, DeleteFileResponse>("unary", this._transport, method, opt, input);
+    }
+    /**
      * @generated from protobuf rpc: CompressFile
      */
     compressFile(input: CompressFileRequest, options?: RpcOptions): UnaryCall<CompressFileRequest, CompressFileResponse> {
-        const method = this.methods[2], opt = this._transport.mergeOptions(options);
+        const method = this.methods[3], opt = this._transport.mergeOptions(options);
         return stackIntercept<CompressFileRequest, CompressFileResponse>("unary", this._transport, method, opt, input);
     }
 }
