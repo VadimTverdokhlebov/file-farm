@@ -41,10 +41,11 @@ type Stats struct {
 }
 
 type StatusSnapshot struct {
-	SuccessfulRequests int64
-	FailedRequests     int64
-	EndpointStats      map[string]map[string]int64
-	Report             *TestMetrics
+	SuccessfulRequests int64                       `json:"SuccessfulRequests"`
+	FailedRequests     int64                       `json:"FailedRequests"`
+	EndpointStats      map[string]map[string]int64 `json:"EndpointStats"`
+	Report             *TestMetrics                `json:"Report"`
+	Servers            []ServerStatus              `json:"Servers"`
 }
 
 type TestConfig struct {
@@ -70,12 +71,13 @@ type Engine struct {
 	stub             grpcdynamic.Stub
 	envoyAdminURL    string
 	loadBalancerURL  string
+	prometheusURL    string
 	testStartedAt    time.Time
 	backendCounters  map[string]envoyEndpointCounters
 	builder          *PayloadBuilder
 }
 
-func NewEngine(target string, protoDir string, envoyAdminURL string, loadBalancerURL string) (*Engine, error) {
+func NewEngine(target string, protoDir string, envoyAdminURL string, loadBalancerURL string, prometheusURL string) (*Engine, error) {
 	endpoints, err := ParseProtoFiles(protoDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize engine: %w", err)
@@ -100,6 +102,7 @@ func NewEngine(target string, protoDir string, envoyAdminURL string, loadBalance
 		stub:             grpcdynamic.NewStub(conn),
 		envoyAdminURL:    envoyAdminURL,
 		loadBalancerURL:  loadBalancerURL,
+		prometheusURL:    prometheusURL,
 		stats: Stats{
 			EndpointStats:  make(map[string]*EndpointStats),
 			latencyBuckets: make([]atomic.Int64, len(latencyBucketBounds)+1),
@@ -112,13 +115,17 @@ func (e *Engine) GetAvailableMethods() []string {
 }
 
 func (e *Engine) GetStatus() (bool, StatusSnapshot) {
+	servers, _ := FetchServerStatuses(e.prometheusURL)
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
+
 	return e.isRunning, StatusSnapshot{
 		SuccessfulRequests: e.stats.SuccessfulRequests.Load(),
 		FailedRequests:     e.stats.FailedRequests.Load(),
 		EndpointStats:      e.stats.SnapshotEndpointStats(),
 		Report:             e.stats.Report,
+		Servers:            servers,
 	}
 }
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { TestStatus, TestConfig, LoadPreset, BalancerAlgorithm, BalancerConfiguration } from '../types/loadTest';
+import { TestStatus, TestConfig, LoadPreset, BalancerAlgorithm, BalancerConfiguration, ServerStatus } from '../types/loadTest';
 import { fetchLoadStandJson, getLoadStandWsUrl } from '../config/loadStand';
 
 interface UseLoadTestReturn {
@@ -29,6 +29,18 @@ interface WebSocketMessage {
   payload: StatusPayload | ErrorPayload;
 }
 
+const defaultServers = (): ServerStatus[] =>
+  [1, 2, 3, 4].map((index) => ({
+    name: `file-farm-server-${index}`,
+    rps: 0,
+    error: 0,
+    eds: 0,
+    mem: 0,
+    ram: 0,
+    cpu: 0,
+    status: 'down',
+  }));
+
 export const useLoadTest = (): UseLoadTestReturn => {
   const [endpoints, setEndpoints] = useState<string[]>([]);
   const [presets, setPresets] = useState<LoadPreset[]>([]);
@@ -36,7 +48,7 @@ export const useLoadTest = (): UseLoadTestReturn => {
   const [selectedAlgorithm, setSelectedAlgorithm] = useState('');
   const [status, setStatus] = useState<TestStatus>({
     isRunning: false,
-    stats: { successfulRequests: 0, failedRequests: 0, report: null },
+    stats: { successfulRequests: 0, failedRequests: 0, report: null, Servers: defaultServers() },
   });
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -83,6 +95,7 @@ export const useLoadTest = (): UseLoadTestReturn => {
               failedRequests: Number(payload.stats.failedRequests) || 0,
               endpointStats: payload.stats.endpointStats || {},
               report: payload.stats.report || null,
+              Servers: payload.stats.Servers?.length ? payload.stats.Servers : defaultServers(),
             },
           });
         } else if (message.type === 'error') {

@@ -14,6 +14,7 @@ type Config struct {
 	GrpcTarget      string
 	EnvoyAdminURL   string
 	LoadBalancerURL string
+	PrometheusURL   string
 }
 
 func getEnv(key, fallback string) string {
@@ -30,10 +31,11 @@ func New() *Config {
 	protoDir, _ := filepath.Abs(getEnv("PROTO_DIR", "../protos"))
 
 	return &Config{
-		HttpPort:      port,
-		ProtoDir:      protoDir,
-		GrpcTarget:    getEnv("TARGET_GRPC", "localhost:8080"),
-		EnvoyAdminURL: getEnv("ENVOY_ADMIN_URL", "http://localhost:9901"),
+		HttpPort:        port,
+		ProtoDir:        protoDir,
+		GrpcTarget:      getEnv("TARGET_GRPC", "localhost:8080"),
+		EnvoyAdminURL:   getEnv("ENVOY_ADMIN_URL", "http://localhost:9901"),
 		LoadBalancerURL: getEnv("LB_CONTROLLER_URL", "http://localhost:9094"),
+		PrometheusURL:   getEnv("PROMETHEUS_URL", "http://file-farm-prometheus:9090"),
 	}
 }

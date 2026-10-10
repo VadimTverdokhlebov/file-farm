@@ -3,7 +3,9 @@
     "list": [
       {
         "builtIn": 1,
-        "datasource": { "type": "prometheus" },
+        "datasource": {
+          "type": "prometheus"
+        },
         "enable": true,
         "expr": "load_stand_test_running == 1",
         "hide": false,
@@ -23,20 +25,49 @@
   "panels": [
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
       "id": 100,
-      "title": "Summary (uses Grafana time range: top-right — Last 5m / 15m)",
-      "type": "row"
+      "title": "Summary (uses Grafana time range: top-right \u2014 Last 5m / 15m)",
+      "type": "row",
+      "fieldConfig": {
+        "defaults": {}
+      }
     },
     {
-      "datasource": { "type": "prometheus" },
-      "fieldConfig": { "defaults": { "unit": "reqps", "decimals": 1 }, "overrides": [] },
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
+      "datasource": {
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 0,
+        "y": 1
+      },
       "id": 1,
-      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["mean"] } },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": [
+            "mean"
+          ]
+        }
+      },
       "targets": [
         {
-          "expr": "sum(rate(file_farm_grpc_requests_total{exported_instance=~\"$server\", method=~\"$method\"}[$__rate_interval]))",
+          "expr": "sum(rate(file_farm_grpc_requests_total{exported_instance=~\"$server\", method=~\"$method\"}[15s]))",
           "legendFormat": "RPS",
           "refId": "A"
         }
@@ -45,18 +76,49 @@
       "type": "stat"
     },
     {
-      "datasource": { "type": "prometheus" },
+      "datasource": {
+        "type": "prometheus"
+      },
       "description": "Lower = more even load across servers.",
       "fieldConfig": {
         "defaults": {
           "decimals": 3,
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.15 }, { "color": "red", "value": 0.3 }] }
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.15
+              },
+              {
+                "color": "red",
+                "value": 0.3
+              }
+            ]
+          }
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 4,
+        "y": 1
+      },
       "id": 2,
-      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["mean"] } },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": [
+            "mean"
+          ]
+        }
+      },
       "targets": [
         {
           "expr": "stddev(sum by (exported_instance) (rate(file_farm_grpc_requests_total{exported_instance=~\"$server\", method=~\"$method\"}[2m]))) / avg(sum by (exported_instance) (rate(file_farm_grpc_requests_total{exported_instance=~\"$server\", method=~\"$method\"}[2m])))",
@@ -68,14 +130,35 @@
       "type": "stat"
     },
     {
-      "datasource": { "type": "prometheus" },
-      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0 }, "overrides": [] },
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
+      "datasource": {
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 8,
+        "y": 1
+      },
       "id": 3,
-      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["mean"] } },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": [
+            "mean"
+          ]
+        }
+      },
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(envoy_cluster_external_upstream_rq_time_bucket{envoy_cluster_name=\"grpc_backend\"}[$__rate_interval]))) / 1000",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(envoy_cluster_external_upstream_rq_time_bucket{envoy_cluster_name=\"grpc_backend\"}[15s]))) / 1000",
           "legendFormat": "p99",
           "refId": "A"
         }
@@ -84,116 +167,183 @@
       "type": "stat"
     },
     {
-      "datasource": { "type": "prometheus" },
+      "datasource": {
+        "type": "prometheus"
+      },
       "fieldConfig": {
         "defaults": {
-          "mappings": [{ "options": { "0": { "color": "red", "text": "stopped" }, "1": { "color": "green", "text": "running" } }, "type": "value" }],
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "red",
+                  "text": "stopped"
+                },
+                "1": {
+                  "color": "green",
+                  "text": "running"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
       "id": 4,
-      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
-      "targets": [{ "expr": "load_stand_test_running", "refId": "A" }],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "load_stand_test_running",
+          "refId": "A"
+        }
+      ],
       "title": "Load test",
       "type": "stat"
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
-      "id": 110,
-      "title": "Load balancing",
-      "type": "row"
-    },
-    {
-      "datasource": { "type": "prometheus" },
-      "fieldConfig": {
-        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 20, "lineWidth": 2 }, "unit": "reqps" },
-        "overrides": []
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 14
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
-      "id": 5,
-      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
-      "targets": [
-        {
-          "expr": "sum by (exported_instance, method) (rate(file_farm_grpc_requests_total{exported_instance=~\"$server\", method=~\"$method\"}[1m]))",
-          "legendFormat": "server-{{exported_instance}} {{method}}",
-          "refId": "A"
-        }
-      ],
-      "title": "gRPC RPS per server",
-      "type": "timeseries"
-    },
-    {
-      "datasource": { "type": "prometheus" },
-      "fieldConfig": {
-        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 20, "lineWidth": 2 }, "unit": "reqps" },
-        "overrides": []
-      },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
-      "id": 6,
-      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
-      "targets": [
-        {
-          "expr": "sum by (envoy_endpoint_address) (rate(envoy_cluster_endpoint_rq_total{envoy_cluster_name=\"grpc_backend\"}[1m]))",
-          "legendFormat": "{{envoy_endpoint_address}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Envoy RPS per upstream endpoint",
-      "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
       "id": 120,
       "title": "Control plane",
-      "type": "row"
-    },
-    {
-      "datasource": { "type": "prometheus" },
-      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 15 },
-      "id": 7,
-      "options": { "colorMode": "none", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "name" },
-      "targets": [
-        { "expr": "lb_controller_algorithm_info{algorithm=~\"$algorithm\"}", "legendFormat": "{{algorithm}}", "refId": "A" }
-      ],
-      "title": "LB algorithm",
-      "type": "stat"
-    },
-    {
-      "datasource": { "type": "prometheus" },
+      "type": "row",
       "fieldConfig": {
-        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "lineWidth": 2 }, "unit": "short" },
+        "defaults": {}
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "showPoints": "never"
+          },
+          "unit": "short"
+        },
         "overrides": []
       },
-      "gridPos": { "h": 5, "w": 18, "x": 6, "y": 15 },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 15
+      },
       "id": 8,
-      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
-      "targets": [{ "expr": "lb_controller_endpoint_weight", "legendFormat": "{{host}}", "refId": "A" }],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "lb_controller_endpoint_weight",
+          "legendFormat": "{{host}}",
+          "refId": "A"
+        }
+      ],
       "title": "Endpoint weights (EDS)",
       "type": "timeseries"
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 20 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 27
+      },
       "id": 130,
       "title": "Errors & latency",
-      "type": "row"
+      "type": "row",
+      "fieldConfig": {
+        "defaults": {}
+      }
     },
     {
-      "datasource": { "type": "prometheus" },
+      "datasource": {
+        "type": "prometheus"
+      },
       "fieldConfig": {
-        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 20, "lineWidth": 2 }, "unit": "reqps" },
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "reqps"
+        },
         "overrides": []
       },
-      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 21 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 28
+      },
       "id": 9,
-      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
       "targets": [
         {
-          "expr": "sum by (exported_instance) (rate(file_farm_grpc_requests_total{status=\"error\", exported_instance=~\"$server\", method=~\"$method\"}[1m]))",
+          "expr": "sum by (exported_instance) (rate(file_farm_grpc_requests_total{status=\"error\", exported_instance=~\"$server\", method=~\"$method\"}[15s]))",
           "legendFormat": "server-{{exported_instance}}",
           "refId": "A"
         }
@@ -202,14 +352,41 @@
       "type": "timeseries"
     },
     {
-      "datasource": { "type": "prometheus" },
+      "datasource": {
+        "type": "prometheus"
+      },
       "fieldConfig": {
-        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "lineWidth": 2 }, "unit": "s" },
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "showPoints": "never"
+          },
+          "unit": "s"
+        },
         "overrides": []
       },
-      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 21 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 28
+      },
       "id": 10,
-      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
       "targets": [
         {
           "expr": "histogram_quantile(0.50, sum by (le) (rate(envoy_cluster_external_upstream_rq_time_bucket{envoy_cluster_name=\"grpc_backend\"}[2m]))) / 1000",
@@ -227,23 +404,60 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 28 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 36
+      },
       "id": 140,
       "title": "Server resources",
-      "type": "row"
+      "type": "row",
+      "fieldConfig": {
+        "defaults": {}
+      }
     },
     {
-      "datasource": { "type": "prometheus" },
+      "datasource": {
+        "type": "prometheus"
+      },
       "fieldConfig": {
-        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 20, "lineWidth": 2 }, "max": 2, "min": 0, "unit": "cores" },
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "max": 2,
+          "min": 0,
+          "unit": "cores"
+        },
         "overrides": []
       },
-      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 29 },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 37
+      },
       "id": 11,
-      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
       "targets": [
         {
-          "expr": "max by (name) (rate(container_cpu_usage_seconds_total{name=~\"file-farm-server-[1-4]\"}[1m]))",
+          "expr": "max by (name) (rate(container_cpu_usage_seconds_total{name=~\"file-farm-server-[1-4]\"}[15s]))",
           "legendFormat": "{{name}}",
           "refId": "A"
         }
@@ -252,14 +466,41 @@
       "type": "timeseries"
     },
     {
-      "datasource": { "type": "prometheus" },
+      "datasource": {
+        "type": "prometheus"
+      },
       "fieldConfig": {
-        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 20, "lineWidth": 2 }, "unit": "bytes" },
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "bytes"
+        },
         "overrides": []
       },
-      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 29 },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 37
+      },
       "id": 12,
-      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
       "targets": [
         {
           "expr": "max by (name) (container_memory_usage_bytes{name=~\"file-farm-server-[1-4]\"})",
@@ -271,14 +512,41 @@
       "type": "timeseries"
     },
     {
-      "datasource": { "type": "prometheus" },
+      "datasource": {
+        "type": "prometheus"
+      },
       "fieldConfig": {
-        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "lineWidth": 2 }, "unit": "short" },
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "showPoints": "never"
+          },
+          "unit": "short"
+        },
         "overrides": []
       },
-      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 29 },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 37
+      },
       "id": 13,
-      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
       "targets": [
         {
           "expr": "file_farm_grpc_active_requests{exported_instance=~\"$server\"}",
@@ -298,13 +566,22 @@
   "refresh": "5s",
   "schemaVersion": 39,
   "style": "dark",
-  "tags": ["file-farm", "load-balancing"],
+  "tags": [
+    "file-farm",
+    "load-balancing"
+  ],
   "templating": {
     "list": [
       {
         "allValue": ".*",
-        "current": { "selected": true, "text": "All", "value": "$__all" },
-        "datasource": { "type": "prometheus" },
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus"
+        },
         "includeAll": true,
         "label": "Server",
         "multi": true,
@@ -315,8 +592,14 @@
       },
       {
         "allValue": ".*",
-        "current": { "selected": true, "text": "All", "value": "$__all" },
-        "datasource": { "type": "prometheus" },
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus"
+        },
         "includeAll": true,
         "label": "Method",
         "multi": true,
@@ -327,8 +610,14 @@
       },
       {
         "allValue": ".*",
-        "current": { "selected": true, "text": "All", "value": "$__all" },
-        "datasource": { "type": "prometheus" },
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus"
+        },
         "includeAll": true,
         "label": "Algorithm",
         "multi": false,
@@ -339,7 +628,10 @@
       }
     ]
   },
-  "time": { "from": "now-15m", "to": "now" },
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
   "timepicker": {},
   "timezone": "browser",
   "title": "File Farm Load Balancing",

@@ -51,7 +51,7 @@ def _parse_bool(raw: str, *, default: bool) -> bool:
 BACKENDS = _parse_backends(os.environ["BACKENDS"]) if os.environ.get("BACKENDS") else DEFAULT_BACKENDS
 CLUSTER_NAME = os.environ.get("CLUSTER_NAME", "grpc_backend")
 EDS_PATH = os.environ.get("EDS_PATH", "/etc/envoy/dynamic/endpoints.yaml")
-UPDATE_INTERVAL_SEC = float(os.environ.get("UPDATE_INTERVAL_SEC", "1"))
+UPDATE_INTERVAL_SEC = float(os.environ.get("UPDATE_INTERVAL_SEC", "0.1"))
 LB_ALGORITHM = os.environ.get("LB_ALGORITHM", "round_robin")
 METRICS_PORT = int(os.environ.get("METRICS_PORT", "9093"))
 CONTROL_PORT = int(os.environ.get("CONTROL_PORT", "9094"))

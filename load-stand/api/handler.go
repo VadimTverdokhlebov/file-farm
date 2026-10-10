@@ -32,6 +32,7 @@ type jsonStats struct {
 	FailedRequests     int64                       `json:"failedRequests"`
 	EndpointStats      map[string]map[string]int64 `json:"endpointStats,omitempty"`
 	Report             *engine.TestMetrics         `json:"report,omitempty"`
+	Servers            []engine.ServerStatus       `json:"Servers,omitempty"`
 }
 
 func (h *Handler) HandleEndpoints(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +74,7 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 			select {
 			case <-ticker.C:
 				isRunning, stats := h.engine.GetStatus()
-				if err := conn.WriteJSON(map[string]interface{}{
+				body, err := json.Marshal(map[string]interface{}{
 					"type": "status",
 					"payload": map[string]interface{}{
 						"isRunning": isRunning,
@@ -82,9 +83,15 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 							FailedRequests:     stats.FailedRequests,
 							EndpointStats:      stats.EndpointStats,
 							Report:             stats.Report,
+							Servers:            stats.Servers,
 						},
 					},
-				}); err != nil {
+				})
+				if err != nil {
+					log.Printf("status encode error: %v", err)
+					continue
+				}
+				if err := conn.WriteMessage(websocket.TextMessage, body); err != nil {
 					return
 				}
 			case <-done:

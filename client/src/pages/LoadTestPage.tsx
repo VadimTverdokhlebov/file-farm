@@ -183,29 +183,69 @@ export const LoadTestPage = () => {
             </div>
           </section>
         )}
+      </div>
 
-        {status.stats.endpointStats && Object.keys(status.stats.endpointStats).length > 0 && (
-          <div className="endpoint-stats">
-            <h3>Per endpoint</h3>
-            <table>
-              <thead>
-                <tr>
-                  <th>Endpoint</th>
-                  <th>Success</th>
-                  <th>Failed</th>
+      <div className="status-container server-stats">
+        <h2>Server status</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Server</th>
+              <th>RPS</th>
+              <th>Error</th>
+              <th>EDS</th>
+              <th>Mem</th>
+              <th>RAM</th>
+              <th>CPU</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(status.stats.Servers ?? []).map((server) => (
+              <tr key={server.name} className={server.status === 'up' ? '' : 'server-down'}>
+                <td>{server.name}</td>
+                <td>{server.rps?.toFixed(1) || '0.0'}</td>
+                <td className={(server.error || 0) > 0 ? 'text-danger' : ''}>
+                  {server.error?.toFixed(2) || '0.0'}%
+                </td>
+                <td>{server.eds || 0}</td>
+                <td>{server.mem?.toFixed(1) || '0.0'} MB</td>
+                <td>{server.ram?.toFixed(1) || '0.0'}%</td>
+                <td>{server.cpu?.toFixed(1) || '0.0'}%</td>
+                <td>
+                  <span className={`status-badge ${server.status === 'up' ? 'up' : 'down'}`}>
+                    {server.status === 'up' ? 'Online' : 'Offline'}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="status-container endpoint-stats">
+        <h2>Per endpoint</h2>
+        {status.stats.endpointStats && Object.keys(status.stats.endpointStats).length > 0 ? (
+          <table>
+            <thead>
+              <tr>
+                <th>Endpoint</th>
+                <th>Success</th>
+                <th>Failed</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(status.stats.endpointStats).map(([endpoint, stats]) => (
+                <tr key={endpoint}>
+                  <td>{endpoint}</td>
+                  <td>{stats.successfulRequests}</td>
+                  <td>{stats.failedRequests}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {Object.entries(status.stats.endpointStats).map(([endpoint, stats]) => (
-                  <tr key={endpoint}>
-                    <td>{endpoint}</td>
-                    <td>{stats.successfulRequests}</td>
-                    <td>{stats.failedRequests}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="empty-note">Per-endpoint counts appear after a test starts.</p>
         )}
       </div>
     </div>

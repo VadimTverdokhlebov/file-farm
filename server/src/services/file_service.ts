@@ -1,4 +1,4 @@
-import { ServerUnaryCall, sendUnaryData } from '@grpc/grpc-js';
+import { ServerUnaryCall, sendUnaryData, status } from '@grpc/grpc-js';
 import { promises as fs } from 'fs';
 import path from 'path';
 import * as zlib from 'zlib';
@@ -96,14 +96,11 @@ export async function UploadFile(
         logger.error('Error uploading file:', error);
         const errorMessage = error instanceof Error ? error.message : 'Failed to upload file';
         
-        const response: UploadFileResponse = {
-            message: `Error: ${errorMessage}`,
-            fileSize: 0,
-            success: false
-        };
-
         recordGrpcRequestEnd('UploadFile', 'error', startedAt);
-        callback(null, response);
+        callback({
+            code: status.INTERNAL,
+            details: errorMessage
+        }, null);
     }
 }
 
@@ -154,13 +151,11 @@ export async function DownloadFile(
         const errorMessage = error instanceof Error ? error.message : 'Failed to download file';
         
         // Return empty response on error
-        const response: DownloadFileResponse = {
-            content: '',
-            mimetype: 'application/octet-stream'
-        };
-
         recordGrpcRequestEnd('DownloadFile', 'error', startedAt);
-        callback(null, response);
+        callback({
+            code: status.INTERNAL,
+            details: errorMessage
+        }, null);
     }
 }
 
@@ -210,12 +205,11 @@ export async function CompressFile(
     } catch (error) {
         logger.error('Error compressing file:', error);
         const errorMessage = error instanceof Error ? error.message : 'Failed to compress file';
-        const response: CompressFileResponse = {
-            message: `Error: ${errorMessage}`,
-            success: false
-        };
         recordGrpcRequestEnd('CompressFile', 'error', startedAt);
-        callback(null, response);
+        callback({
+            code: status.INTERNAL,
+            details: errorMessage
+        }, null);
     }
 }
 
@@ -261,12 +255,10 @@ export async function DeleteFile(
         logger.error('Error deleting file:', error);
         const errorMessage = error instanceof Error ? error.message : 'Failed to delete file';
         
-        const response: DeleteFileResponse = {
-            message: `Error: ${errorMessage}`,
-            success: false
-        };
-
         recordGrpcRequestEnd('DeleteFile', 'error', startedAt);
-        callback(null, response);
+        callback({
+            code: status.INTERNAL,
+            details: errorMessage
+        }, null);
     }
 }

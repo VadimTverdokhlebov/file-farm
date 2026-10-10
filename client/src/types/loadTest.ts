@@ -1,8 +1,20 @@
+export interface ServerStatus {
+  name: string;
+  rps: number;
+  error: number;
+  eds: number;
+  mem: number;
+  ram: number;
+  cpu: number;
+  status: string;
+}
+
 export interface TestStats {
   successfulRequests: number;
   failedRequests: number;
   endpointStats?: Record<string, EndpointStat>;
   report?: TestMetrics | null;
+  Servers?: ServerStatus[];
 }
 
 export interface TestMetrics {
