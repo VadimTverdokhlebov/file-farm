@@ -1,7 +1,7 @@
 import threading
 
 from balancers import create_balancer
-from config import BACKEND_WEIGHTS, BACKENDS, DQN_WEIGHT_TOTAL, LB_ALGORITHM
+from config import BACKENDS, LB_ALGORITHM
 from metrics import set_algorithm
 
 ALGORITHMS = (
@@ -22,7 +22,7 @@ class BalancerRuntime:
 
     @staticmethod
     def _create_balancer(algorithm: str):
-        return create_balancer(algorithm, BACKENDS, backend_weights=BACKEND_WEIGHTS)
+        return create_balancer(algorithm, BACKENDS)
 
     def get_configuration(self) -> dict:
         with self._lock:

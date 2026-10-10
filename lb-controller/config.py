@@ -57,7 +57,7 @@ METRICS_PORT = int(os.environ.get("METRICS_PORT", "9093"))
 CONTROL_PORT = int(os.environ.get("CONTROL_PORT", "9094"))
 RESOLVE_BACKEND_HOSTS = _parse_bool(os.environ.get("RESOLVE_BACKEND_HOSTS", ""), default=True)
 
-# Comma-separated weights in BACKENDS order (used by weighted_round_robin).
+# Unused by WRR. Weighted round robin derives EDS weights from BACKEND_CPU_LIMITS.
 BACKEND_WEIGHTS = os.environ.get("BACKEND_WEIGHTS", "100,100,100,100")
 
 # DQN / RL balancer settings.

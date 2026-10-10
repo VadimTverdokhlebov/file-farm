@@ -21,12 +21,13 @@ __all__ = [
 ]
 
 
-def create_balancer(algorithm: str, backends, *, backend_weights: str = "100,100,100") -> Balancer:
+def create_balancer(algorithm: str, backends) -> Balancer:
     if algorithm == "round_robin":
         return RoundRobinBalancer(backends)
 
     if algorithm == "weighted_round_robin":
-        return WeightedRoundRobinBalancer(backends, backend_weights)
+        cpu_limits, _memory_limits = parse_capacity_lists(backends)
+        return WeightedRoundRobinBalancer(backends, cpu_limits, weight_total=DQN_WEIGHT_TOTAL)
 
     if algorithm == "ema":
         return EmaBalancer(

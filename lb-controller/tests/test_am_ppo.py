@@ -9,7 +9,8 @@ from rl.am_ppo_model import AMPPORLModel
 from rl.metrics_source import StubMetricsSource
 from rl.prometheus_metrics_source import PrometheusMetricsSource, cpu_utilization_ratio
 from rl.types import ClusterState, ServerState
-from rl.weights import logits_to_eds_weights, masked_logits_to_eds_weights
+from balancers.weighted_round_robin import WeightedRoundRobinBalancer
+from rl.weights import capacity_eds_weights, logits_to_eds_weights, masked_logits_to_eds_weights
 
 
 BACKENDS = (
@@ -87,6 +88,28 @@ class ScriptedMetricsSource:
 
 
 class AMPPOTests(unittest.TestCase):
+    def test_weighted_round_robin_follows_cpu_capacity(self) -> None:
+        backends = (
+            Backend(name="server-1", host="file-farm-server-1", port=50051),
+            Backend(name="server-2", host="file-farm-server-2", port=50051),
+            Backend(name="server-3", host="file-farm-server-3", port=50051),
+            Backend(name="server-4", host="file-farm-server-4", port=50051),
+        )
+        capacities = (0.5, 1.0, 0.5, 2.0)
+
+        weights = capacity_eds_weights(backends, capacities, weight_total=1000)
+        decision = WeightedRoundRobinBalancer(backends, capacities, weight_total=1000).select()
+
+        expected = {
+            "file-farm-server-1": 125,
+            "file-farm-server-2": 250,
+            "file-farm-server-3": 125,
+            "file-farm-server-4": 500,
+        }
+        self.assertEqual(weights, expected)
+        self.assertEqual(decision.weights, expected)
+        self.assertEqual(sum(decision.weights.values()), 1000)
+
     def test_masked_weights_exclude_unhealthy_backend(self) -> None:
         weights = masked_logits_to_eds_weights(
             BACKENDS,

@@ -37,6 +37,44 @@ def logits_to_eds_weights(
     return _rebalance_to_total(weights, backends, weight_total, min_weight)
 
 
+def capacity_eds_weights(
+    backends: tuple[Backend, ...],
+    capacities: tuple[float, ...],
+    *,
+    weight_total: int,
+) -> dict[str, int]:
+    """Integer EDS weights proportional to backend capacity, summing to weight_total."""
+    if not backends:
+        raise ValueError("At least one backend is required")
+    if len(capacities) != len(backends):
+        raise ValueError(f"Expected {len(backends)} capacities, got {len(capacities)}")
+    if weight_total <= 0:
+        raise ValueError("weight_total must be positive")
+
+    cleaned: list[float] = []
+    for backend, capacity in zip(backends, capacities):
+        if not math.isfinite(capacity) or capacity < 0.0:
+            raise ValueError(f"Capacity for {backend.name} must be non-negative, got {capacity}")
+        cleaned.append(float(capacity))
+
+    total_capacity = sum(cleaned)
+    if total_capacity <= 0.0:
+        raise ValueError("At least one backend capacity must be positive")
+
+    shares = [capacity / total_capacity * weight_total for capacity in cleaned]
+    weights = [int(math.floor(share)) for share in shares]
+    remainder = weight_total - sum(weights)
+    order = sorted(
+        range(len(shares)),
+        key=lambda index: shares[index] - weights[index],
+        reverse=True,
+    )
+    for index in range(remainder):
+        weights[order[index % len(order)]] += 1
+
+    return {backend.host: weight for backend, weight in zip(backends, weights)}
+
+
 def equal_eds_weights(backends: tuple[Backend, ...], *, weight_total: int) -> dict[str, int]:
     if not backends:
         raise ValueError("At least one backend is required")
