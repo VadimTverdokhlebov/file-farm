@@ -79,6 +79,11 @@ make build
 ```bash
 make up
 ```
+### Restart All Services
+
+```bash
+make restart
+```
 
 ### Stop Services
 
