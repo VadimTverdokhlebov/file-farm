@@ -82,6 +82,7 @@ AM_PPO_REWARD_ERROR_WEIGHT = float(os.environ.get("AM_PPO_REWARD_ERROR_WEIGHT", 
 AM_PPO_REWARD_CPU_WEIGHT = float(os.environ.get("AM_PPO_REWARD_CPU_WEIGHT", "8.0"))
 AM_PPO_REWARD_BALANCE_WEIGHT = float(os.environ.get("AM_PPO_REWARD_BALANCE_WEIGHT", "4.0"))
 AM_PPO_CPU_SATURATION = float(os.environ.get("AM_PPO_CPU_SATURATION", "0.90"))
+AM_PPO_CPU_HARD_LIMIT = float(os.environ.get("AM_PPO_CPU_HARD_LIMIT", "0.95"))
 AM_PPO_MIN_TRAINING_RPS = float(os.environ.get("AM_PPO_MIN_TRAINING_RPS", "1.0"))
 AM_PPO_REWARD_CHURN_WEIGHT = float(os.environ.get("AM_PPO_REWARD_CHURN_WEIGHT", "0.5"))
 AM_PPO_MODEL_PATH = os.environ.get("AM_PPO_MODEL_PATH", "/app/data/am_ppo_model.pt")

@@ -45,6 +45,7 @@ const envoyEndpointStatsPrefix = "cluster.grpc_backend.endpoint."
 type TestMetrics struct {
 	RPS              float64 `json:"rps"`
 	P50Millis        float64 `json:"p50Millis"`
+	P95Millis        float64 `json:"p95Millis"`
 	P99Millis        float64 `json:"p99Millis"`
 	ErrorRatePercent float64 `json:"errorRatePercent"`
 	JainIndex        float64 `json:"jainIndex"`
@@ -141,6 +142,7 @@ func summarizeTest(
 		result.ErrorRatePercent = float64(failedRequests) / float64(totalRequests) * 100
 	}
 	result.P50Millis = percentileMillis(latencyBuckets, 0.50)
+	result.P95Millis = percentileMillis(latencyBuckets, 0.95)
 	result.P99Millis = percentileMillis(latencyBuckets, 0.99)
 	result.JainIndex, result.JainAvailable = jainIndex(before, after)
 	return result

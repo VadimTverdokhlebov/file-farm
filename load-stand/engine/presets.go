@@ -6,7 +6,27 @@ const (
 	CompressFileRPC = "/filefarm.file.FileService/CompressFile"
 	CreateUserRPC   = "/filefarm.user.UserService/CreateUser"
 	GetUserRPC      = "/filefarm.user.UserService/GetUser"
+	DeleteFileRPC   = "/filefarm.file.FileService/DeleteFile"
 )
+
+// MaxTestFileSizeKB is the largest raw file whose base64 body still fits in the
+// default 4 MB gRPC message limit, leaving room for protobuf fields and gzip output.
+func MaxTestFileSizeKB() int {
+	const (
+		defaultGrpcMessageBytes = 4 * 1024 * 1024
+		messageOverheadBytes    = 64 * 1024
+	)
+	rawBytes := ((defaultGrpcMessageBytes - messageOverheadBytes) / 4) * 3
+	return rawBytes / 1024
+}
+
+func clampFileSizeKB(sizeKB int) int {
+	limit := MaxTestFileSizeKB()
+	if sizeKB > limit {
+		return limit
+	}
+	return sizeKB
+}
 
 type Preset struct {
 	ID          string   `json:"id"`
@@ -121,14 +141,47 @@ func (c TestConfig) WithDefaults() TestConfig {
 			cfg.FileSizeMaxKB = 1024
 		}
 	}
+	cfg.FileSizeMinKB = clampFileSizeKB(cfg.FileSizeMinKB)
+	cfg.FileSizeMaxKB = clampFileSizeKB(cfg.FileSizeMaxKB)
+	if cfg.FileSizeMinKB > cfg.FileSizeMaxKB {
+		cfg.FileSizeMinKB = cfg.FileSizeMaxKB
+	}
 	cfg.FileSizeKB = (cfg.FileSizeMinKB + cfg.FileSizeMaxKB) / 2
+	for index := range cfg.Phases {
+		cfg.Phases[index].FileSizeMinKB = clampFileSizeKB(cfg.Phases[index].FileSizeMinKB)
+		cfg.Phases[index].FileSizeMaxKB = clampFileSizeKB(cfg.Phases[index].FileSizeMaxKB)
+		if cfg.Phases[index].FileSizeMinKB > cfg.Phases[index].FileSizeMaxKB {
+			cfg.Phases[index].FileSizeMinKB = cfg.Phases[index].FileSizeMaxKB
+		}
+	}
+	if len(cfg.Phases) > 0 {
+		cfg.Concurrency = cfg.Phases[0].Concurrency
+		cfg.FileSizeMinKB = cfg.Phases[0].FileSizeMinKB
+		cfg.FileSizeMaxKB = cfg.Phases[0].FileSizeMaxKB
+		cfg.FileSizeKB = (cfg.FileSizeMinKB + cfg.FileSizeMaxKB) / 2
+		iterations := 1
+		if cfg.WaveIterations != nil && *cfg.WaveIterations >= 0 {
+			iterations = *cfg.WaveIterations
+		}
+		resolved := iterations
+		cfg.WaveIterations = &resolved
+		cycleSeconds := 0
+		for _, phase := range cfg.Phases {
+			cycleSeconds += phase.DurationSec
+		}
+		if iterations == 0 {
+			cfg.Duration = 0
+		} else {
+			cfg.Duration = cycleSeconds * iterations
+		}
+	}
 
 	return cfg
 }
 
 func (c TestConfig) needsDownloadWarmup() bool {
 	for _, endpoint := range c.Endpoints {
-		if endpoint == DownloadFileRPC {
+		if endpoint == DownloadFileRPC || endpoint == DeleteFileRPC {
 			return true
 		}
 	}

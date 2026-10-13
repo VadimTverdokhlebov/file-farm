@@ -13,25 +13,39 @@ import (
 )
 
 type PayloadBuilder struct {
-	fileSizeMinKB int
-	fileSizeMaxKB int
-	uploadCounter atomic.Int64
-	userCounter   atomic.Int64
-	uploadedFiles []string
-	createdLogins []string
+	fileSizeMinKB    atomic.Int64
+	fileSizeMaxKB    atomic.Int64
+	uploadCounter    atomic.Int64
+	userCounter      atomic.Int64
+	uploadedFiles    []string
+	createdLogins    []string
 	DeleteMethodDesc *desc.MethodDescriptor
-	mu            sync.RWMutex
+	mu               sync.RWMutex
 }
 
 func NewPayloadBuilder(fileSizeMinKB int, fileSizeMaxKB int) *PayloadBuilder {
-	return &PayloadBuilder{fileSizeMinKB: fileSizeMinKB, fileSizeMaxKB: fileSizeMaxKB}
+	builder := &PayloadBuilder{}
+	builder.SetFileSizeRange(fileSizeMinKB, fileSizeMaxKB)
+	return builder
+}
+
+func (b *PayloadBuilder) SetFileSizeRange(fileSizeMinKB int, fileSizeMaxKB int) {
+	fileSizeMinKB = clampFileSizeKB(fileSizeMinKB)
+	fileSizeMaxKB = clampFileSizeKB(fileSizeMaxKB)
+	if fileSizeMinKB > fileSizeMaxKB {
+		fileSizeMinKB = fileSizeMaxKB
+	}
+	b.fileSizeMinKB.Store(int64(fileSizeMinKB))
+	b.fileSizeMaxKB.Store(int64(fileSizeMaxKB))
 }
 
 func (b *PayloadBuilder) nextFileSizeKB() int {
-	if b.fileSizeMinKB >= b.fileSizeMaxKB {
-		return b.fileSizeMinKB
+	minKB := int(b.fileSizeMinKB.Load())
+	maxKB := int(b.fileSizeMaxKB.Load())
+	if minKB >= maxKB {
+		return minKB
 	}
-	return b.fileSizeMinKB + mathrand.Intn(b.fileSizeMaxKB-b.fileSizeMinKB+1)
+	return minKB + mathrand.Intn(maxKB-minKB+1)
 }
 
 func (b *PayloadBuilder) RecordUploadedFile(filename string) {

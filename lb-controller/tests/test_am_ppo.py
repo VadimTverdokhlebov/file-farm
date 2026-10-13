@@ -238,7 +238,32 @@ class AMPPOTests(unittest.TestCase):
             {"server-1": 500, "server-2": 500},
         )
 
-        self.assertAlmostEqual(reward, -1.2)
+        # 100% -> 8, 95% -> 1, weight 8. A full server costs far more than a 2s p99 (10).
+        self.assertAlmostEqual(reward, -72.0)
+
+        hot_tail = balancer._compute_reward(
+            make_state(
+                cpu=(1.0, 0.5),
+                errors=(0.0, 0.0),
+                request_rates=(10.0, 10.0),
+                latency_p99=2.0,
+            ),
+            {"server-1": 500, "server-2": 500},
+            {"server-1": 500, "server-2": 500},
+        )
+        calm_tail = balancer._compute_reward(
+            make_state(
+                cpu=(0.9, 0.9),
+                errors=(0.0, 0.0),
+                request_rates=(10.0, 10.0),
+                latency_p99=2.0,
+            ),
+            {"server-1": 500, "server-2": 500},
+            {"server-1": 500, "server-2": 500},
+        )
+        self.assertAlmostEqual(hot_tail, -74.0)
+        self.assertAlmostEqual(calm_tail, -10.0)
+        self.assertLess(hot_tail, calm_tail)
 
     def test_even_cpu_utilization_scores_better_than_a_split(self) -> None:
         balancer = AMPPOBalancer(

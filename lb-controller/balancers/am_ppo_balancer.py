@@ -3,6 +3,7 @@ import math
 
 from config import (
     AM_PPO_CLIP_EPSILON,
+    AM_PPO_CPU_HARD_LIMIT,
     AM_PPO_CPU_SATURATION,
     AM_PPO_ENTROPY_COEFFICIENT,
     AM_PPO_GAE_LAMBDA,
@@ -40,6 +41,7 @@ class AMPPOBalancer(Balancer):
         weight_total: int = 1000,
         latency_sla_seconds: float = AM_PPO_LATENCY_SLA_SECONDS,
         cpu_saturation: float = AM_PPO_CPU_SATURATION,
+        cpu_hard_limit: float = AM_PPO_CPU_HARD_LIMIT,
         min_training_rps: float = AM_PPO_MIN_TRAINING_RPS,
         latency_weight: float = AM_PPO_REWARD_LATENCY_WEIGHT,
         error_weight: float = AM_PPO_REWARD_ERROR_WEIGHT,
@@ -55,6 +57,8 @@ class AMPPOBalancer(Balancer):
             raise ValueError("latency_sla_seconds must be positive")
         if not 0.0 <= cpu_saturation < 1.0:
             raise ValueError("cpu_saturation must be in [0, 1)")
+        if not cpu_saturation < cpu_hard_limit <= 1.0:
+            raise ValueError("cpu_hard_limit must be above cpu_saturation and at most 1")
         if min_training_rps < 0.0:
             raise ValueError("min_training_rps must be non-negative")
         if balance_weight < 0.0:
@@ -64,6 +68,7 @@ class AMPPOBalancer(Balancer):
         self._weight_total = weight_total
         self._latency_sla_seconds = latency_sla_seconds
         self._cpu_saturation = cpu_saturation
+        self._cpu_hard_limit = cpu_hard_limit
         self._min_training_rps = min_training_rps
         self._latency_weight = latency_weight
         self._error_weight = error_weight
@@ -130,8 +135,11 @@ class AMPPOBalancer(Balancer):
         else:
             error_rate = 0.0
 
+        # Each server pays nothing at or below 90%, then a squared cost through 95%,
+        # and a much steeper cost above 95%. One server at 100% outweighs a 2s p99.
         cpu_penalty = sum(
-            max(server.cpu_utilization - self._cpu_saturation, 0.0) for server in state.servers
+            _cpu_saturation_penalty(server.cpu_utilization, self._cpu_saturation, self._cpu_hard_limit)
+            for server in state.servers
         )
         # Zero when healthy servers sit at the same fraction of their own CPU limit.
         balance_penalty = _cpu_utilization_spread(state)
@@ -149,6 +157,21 @@ class AMPPOBalancer(Balancer):
 
     def _is_trainable(self, state: ClusterState) -> bool:
         return state.cluster_request_rate_rps >= self._min_training_rps
+
+
+def _cpu_saturation_penalty(cpu: float, soft_limit: float, hard_limit: float) -> float:
+    if not math.isfinite(cpu):
+        return 0.0
+    cpu = min(max(cpu, 0.0), 1.0)
+    if cpu <= soft_limit:
+        return 0.0
+    band = max(hard_limit - soft_limit, 1e-6)
+    units = (cpu - soft_limit) / band
+    penalty = units * units
+    if cpu > hard_limit:
+        over_hard = (cpu - hard_limit) / band
+        penalty += 4.0 * over_hard * over_hard
+    return penalty
 
 
 def _cpu_utilization_spread(state: ClusterState) -> float:

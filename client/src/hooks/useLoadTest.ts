@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { TestStatus, TestConfig, LoadPreset, BalancerAlgorithm, BalancerConfiguration, ServerStatus } from '../types/loadTest';
+import { TestStatus, TestConfig, LoadPreset, BalancerAlgorithm, BalancerConfiguration, ServerStatus, ServerHistoryPoint } from '../types/loadTest';
 import { fetchLoadStandJson, getLoadStandWsUrl, postLoadStandJson } from '../config/loadStand';
 
 interface UseLoadTestReturn {
@@ -9,6 +9,7 @@ interface UseLoadTestReturn {
   selectedAlgorithm: string;
   setSelectedAlgorithm: (algorithm: string) => void;
   status: TestStatus;
+  serverHistory: ServerHistoryPoint[];
   startTest: (config: TestConfig) => void;
   stopTest: () => void;
   setServerPower: (name: string, action: 'start' | 'stop') => Promise<void>;
@@ -56,6 +57,7 @@ export const useLoadTest = (): UseLoadTestReturn => {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [pendingServer, setPendingServer] = useState<string | null>(null);
+  const [serverHistory, setServerHistory] = useState<ServerHistoryPoint[]>([]);
   const ws = useRef<WebSocket | null>(null);
 
   useEffect(() => {
@@ -92,6 +94,7 @@ export const useLoadTest = (): UseLoadTestReturn => {
         const message: WebSocketMessage = JSON.parse(event.data);
         if (message.type === 'status') {
           const payload = message.payload as StatusPayload;
+          const servers = payload.stats.Servers?.length ? payload.stats.Servers : defaultServers();
           setStatus({
             isRunning: payload.isRunning,
             stats: {
@@ -99,8 +102,18 @@ export const useLoadTest = (): UseLoadTestReturn => {
               failedRequests: Number(payload.stats.failedRequests) || 0,
               endpointStats: payload.stats.endpointStats || {},
               report: payload.stats.report || null,
-              Servers: payload.stats.Servers?.length ? payload.stats.Servers : defaultServers(),
+              Servers: servers,
+              elapsedSeconds: Number(payload.stats.elapsedSeconds) || 0,
+              durationSeconds: Number(payload.stats.durationSeconds) || 0,
+              waveIteration: Number(payload.stats.waveIteration) || 0,
+              waveIndex: Number(payload.stats.waveIndex) || 0,
+              waveCount: Number(payload.stats.waveCount) || 0,
+              waveIterations: Number(payload.stats.waveIterations) || 0,
             },
+          });
+          setServerHistory((current) => {
+            const next = current.concat({ at: Date.now(), servers });
+            return next.length > 180 ? next.slice(next.length - 180) : next;
           });
         } else if (message.type === 'error') {
           const payload = message.payload as ErrorPayload;
@@ -123,7 +136,10 @@ export const useLoadTest = (): UseLoadTestReturn => {
     }
   }, []);
 
-  const startTest = useCallback((config: TestConfig) => sendCommand('start', config), [sendCommand]);
+  const startTest = useCallback((config: TestConfig) => {
+    setServerHistory([]);
+    sendCommand('start', config);
+  }, [sendCommand]);
   const stopTest = useCallback(() => sendCommand('stop'), [sendCommand]);
 
   const setServerPower = useCallback(async (name: string, action: 'start' | 'stop') => {
@@ -156,6 +172,7 @@ export const useLoadTest = (): UseLoadTestReturn => {
     selectedAlgorithm,
     setSelectedAlgorithm,
     status,
+    serverHistory,
     startTest,
     stopTest,
     setServerPower,

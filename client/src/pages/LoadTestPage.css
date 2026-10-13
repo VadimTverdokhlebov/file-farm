@@ -127,6 +127,67 @@
   margin-top: 16px;
 }
 
+.load-scenarios {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.load-phases {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.load-phase {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #e4eaf0;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.load-phase h3 {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 14px;
+}
+
+.load-scenario {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+  padding: 14px;
+  border: 1px solid #d9e0e7;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #172033;
+  cursor: pointer;
+}
+
+.load-scenario span {
+  color: #5c6b7a;
+  font-size: 14px;
+}
+
+.load-scenario-active {
+  border-color: #1f6f5b;
+  background: #f3faf7;
+}
+
+.load-scenario:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.load-weakness {
+  margin: 14px 0;
+  color: #5c6b7a;
+}
+
 .load-stats,
 .load-report-grid {
   display: grid;
@@ -169,6 +230,59 @@
 
 .load-empty {
   margin: 8px 0 0;
+}
+
+.load-charts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.load-chart {
+  padding: 12px;
+  border: 1px solid #e4eaf0;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.load-chart h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.load-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-bottom: 6px;
+  color: #5c6b7a;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.load-legend i {
+  display: inline-block;
+  width: 14px;
+  height: 3px;
+  margin-right: 6px;
+  border-radius: 2px;
+  vertical-align: middle;
+}
+
+.load-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.load-chart-grid {
+  stroke: #e4eaf0;
+  stroke-width: 1;
+}
+
+.load-chart-tick {
+  fill: #5c6b7a;
+  font-size: 11px;
 }
 
 .load-table-wrap {
@@ -260,7 +374,10 @@
     align-items: flex-start;
   }
 
-  .load-fields {
+  .load-fields,
+  .load-scenarios,
+  .load-phase,
+  .load-charts {
     grid-template-columns: 1fr;
   }
 

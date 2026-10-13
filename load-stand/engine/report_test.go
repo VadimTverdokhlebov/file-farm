@@ -34,6 +34,9 @@ func TestSummarizeTestMetrics(t *testing.T) {
 	if result.P50Millis != 20 || result.P99Millis != 200 {
 		t.Fatalf("unexpected latency percentiles p50=%v p99=%v", result.P50Millis, result.P99Millis)
 	}
+	if math.Abs(result.P95Millis-195.918367) > 0.001 {
+		t.Fatalf("unexpected p95 %v", result.P95Millis)
+	}
 	if !result.JainAvailable || result.JainIndex != 1 {
 		t.Fatalf("expected Jain index 1, got %v (available=%t)", result.JainIndex, result.JainAvailable)
 	}

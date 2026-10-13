@@ -16,11 +16,18 @@ export interface TestStats {
   endpointStats?: Record<string, EndpointStat>;
   report?: TestMetrics | null;
   Servers?: ServerStatus[];
+  elapsedSeconds?: number;
+  durationSeconds?: number;
+  waveIteration?: number;
+  waveIndex?: number;
+  waveCount?: number;
+  waveIterations?: number;
 }
 
 export interface TestMetrics {
   rps: number;
   p50Millis: number;
+  p95Millis?: number;
   p99Millis: number;
   errorRatePercent: number;
   jainIndex: number;
@@ -31,6 +38,11 @@ export interface TestMetrics {
 export interface EndpointStat {
   successfulRequests: number;
   failedRequests: number;
+}
+
+export interface ServerHistoryPoint {
+  at: number;
+  servers: ServerStatus[];
 }
 
 export interface TestStatus {
@@ -48,6 +60,15 @@ export interface TestConfig {
   fileSizeMinKb: number;
   fileSizeMaxKb: number;
   warmupFiles?: number;
+  stopServer?: string;
+  stopAfterSec?: number;
+  waveIterations?: number;
+  phases?: {
+    concurrency: number;
+    durationSec: number;
+    fileSizeMinKb: number;
+    fileSizeMaxKb: number;
+  }[];
 }
 
 export interface BalancerAlgorithm {

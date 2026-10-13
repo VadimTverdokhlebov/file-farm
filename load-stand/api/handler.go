@@ -34,6 +34,12 @@ type jsonStats struct {
 	EndpointStats      map[string]map[string]int64 `json:"endpointStats,omitempty"`
 	Report             *engine.TestMetrics         `json:"report,omitempty"`
 	Servers            []engine.ServerStatus       `json:"Servers,omitempty"`
+	ElapsedSeconds     int                         `json:"elapsedSeconds"`
+	DurationSeconds    int                         `json:"durationSeconds"`
+	WaveIteration      int                         `json:"waveIteration"`
+	WaveIndex          int                         `json:"waveIndex"`
+	WaveCount          int                         `json:"waveCount"`
+	WaveIterations     int                         `json:"waveIterations"`
 }
 
 func (h *Handler) HandleEndpoints(w http.ResponseWriter, r *http.Request) {
@@ -109,6 +115,12 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 							EndpointStats:      stats.EndpointStats,
 							Report:             stats.Report,
 							Servers:            stats.Servers,
+							ElapsedSeconds:     stats.ElapsedSeconds,
+							DurationSeconds:    stats.DurationSeconds,
+							WaveIteration:      stats.WaveIteration,
+							WaveIndex:          stats.WaveIndex,
+							WaveCount:          stats.WaveCount,
+							WaveIterations:     stats.WaveIterations,
 						},
 					},
 				})

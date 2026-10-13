@@ -46,36 +46,61 @@ type StatusSnapshot struct {
 	EndpointStats      map[string]map[string]int64 `json:"EndpointStats"`
 	Report             *TestMetrics                `json:"Report"`
 	Servers            []ServerStatus              `json:"Servers"`
+	ElapsedSeconds     int                         `json:"elapsedSeconds"`
+	DurationSeconds    int                         `json:"durationSeconds"`
+	WaveIteration      int                         `json:"waveIteration"`
+	WaveIndex          int                         `json:"waveIndex"`
+	WaveCount          int                         `json:"waveCount"`
+	WaveIterations     int                         `json:"waveIterations"`
 }
 
 type TestConfig struct {
-	Concurrency   int      `json:"concurrency"`
-	Duration      int      `json:"duration"`
-	Endpoints     []string `json:"endpoints"`
-	Preset        string   `json:"preset"`
-	Algorithm     string   `json:"algorithm"`
-	FileSizeKB    int      `json:"fileSizeKb"`
-	FileSizeMinKB int      `json:"fileSizeMinKb"`
-	FileSizeMaxKB int      `json:"fileSizeMaxKb"`
-	WarmupFiles   int      `json:"warmupFiles"`
+	Concurrency    int         `json:"concurrency"`
+	Duration       int         `json:"duration"`
+	Endpoints      []string    `json:"endpoints"`
+	Preset         string      `json:"preset"`
+	Algorithm      string      `json:"algorithm"`
+	FileSizeKB     int         `json:"fileSizeKb"`
+	FileSizeMinKB  int         `json:"fileSizeMinKb"`
+	FileSizeMaxKB  int         `json:"fileSizeMaxKb"`
+	WarmupFiles    int         `json:"warmupFiles"`
+	StopServer     string      `json:"stopServer"`
+	StopAfterSec   int         `json:"stopAfterSec"`
+	Phases         []LoadPhase `json:"phases,omitempty"`
+	WaveIterations *int        `json:"waveIterations,omitempty"`
+}
+
+type LoadPhase struct {
+	Concurrency   int `json:"concurrency"`
+	DurationSec   int `json:"durationSec"`
+	FileSizeMinKB int `json:"fileSizeMinKb"`
+	FileSizeMaxKB int `json:"fileSizeMaxKb"`
 }
 
 type Engine struct {
-	mu               sync.Mutex
-	isRunning        bool
-	cancelFunc       context.CancelFunc
-	stats            Stats
-	availableMethods []string
-	target           string
-	conn             *grpc.ClientConn
-	stub             grpcdynamic.Stub
-	envoyAdminURL    string
-	loadBalancerURL  string
-	prometheusURL    string
-	docker           *dockerClient
-	testStartedAt    time.Time
-	backendCounters  map[string]envoyEndpointCounters
-	builder          *PayloadBuilder
+	mu                    sync.Mutex
+	isRunning             bool
+	cancelFunc            context.CancelFunc
+	stats                 Stats
+	availableMethods      []string
+	target                string
+	conn                  *grpc.ClientConn
+	stub                  grpcdynamic.Stub
+	envoyAdminURL         string
+	loadBalancerURL       string
+	prometheusURL         string
+	docker                *dockerClient
+	serverToRestore       string
+	loadGeneration        uint64
+	userCancels           []context.CancelFunc
+	testStartedAt         time.Time
+	testDurationSec       int
+	waveIteration         int
+	waveIndex             int
+	waveCount             int
+	plannedWaveIterations int
+	backendCounters       map[string]envoyEndpointCounters
+	builder               *PayloadBuilder
 }
 
 func NewEngine(target string, protoDir string, envoyAdminURL string, loadBalancerURL string, prometheusURL string, dockerSocket string) (*Engine, error) {
@@ -127,17 +152,48 @@ func (e *Engine) GetStatus() (bool, StatusSnapshot) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	elapsed := 0
+	if e.isRunning && !e.testStartedAt.IsZero() {
+		elapsed = int(time.Since(e.testStartedAt).Seconds())
+	} else if e.stats.Report != nil {
+		elapsed = int(e.stats.Report.DurationSeconds)
+	}
+
 	return e.isRunning, StatusSnapshot{
 		SuccessfulRequests: e.stats.SuccessfulRequests.Load(),
 		FailedRequests:     e.stats.FailedRequests.Load(),
 		EndpointStats:      e.stats.SnapshotEndpointStats(),
 		Report:             e.stats.Report,
 		Servers:            servers,
+		ElapsedSeconds:     elapsed,
+		DurationSeconds:    e.testDurationSec,
+		WaveIteration:      e.waveIteration,
+		WaveIndex:          e.waveIndex,
+		WaveCount:          e.waveCount,
+		WaveIterations:     e.plannedWaveIterations,
 	}
 }
 
 func (e *Engine) SetServerPower(ctx context.Context, name, action string) error {
 	return e.docker.setPower(ctx, name, action)
+}
+
+func (e *Engine) restoreStoppedServer() {
+	e.mu.Lock()
+	name := e.serverToRestore
+	e.serverToRestore = ""
+	e.mu.Unlock()
+	if name == "" {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := e.SetServerPower(ctx, name, "start"); err != nil {
+		log.Printf("Failed to start %s after the scenario: %v", name, err)
+		return
+	}
+	log.Printf("Restored %s after the scenario", name)
 }
 
 func (e *Engine) getEndpointStats(endpoint string) *EndpointStats {
@@ -200,9 +256,27 @@ func (e *Engine) StartTest(rawConfig TestConfig) error {
 		e.mu.Unlock()
 		return fmt.Errorf("no endpoints selected")
 	}
-	if config.FileSizeMinKB < 1 || config.FileSizeMaxKB < config.FileSizeMinKB || config.FileSizeMaxKB > 47*1024 {
+	if config.FileSizeMinKB < 1 || config.FileSizeMaxKB < config.FileSizeMinKB || config.FileSizeMaxKB > MaxTestFileSizeKB() {
 		e.mu.Unlock()
-		return fmt.Errorf("file size range must be between 1 and %d KB, with min <= max", 47*1024)
+		return fmt.Errorf("file size range must be between 1 and %d KB, with min <= max", MaxTestFileSizeKB())
+	}
+	if err := validatePhases(config.Phases); err != nil {
+		e.mu.Unlock()
+		return err
+	}
+	if config.StopServer != "" {
+		if !allowedServerName(config.StopServer) {
+			e.mu.Unlock()
+			return fmt.Errorf("stopServer must be one of file-farm-server-1..4")
+		}
+		if config.StopAfterSec < 5 {
+			e.mu.Unlock()
+			return fmt.Errorf("stopAfterSec must be at least 5 seconds")
+		}
+		if config.Duration > 0 && config.StopAfterSec >= config.Duration {
+			e.mu.Unlock()
+			return fmt.Errorf("stopAfterSec must be earlier than the test duration")
+		}
 	}
 	e.isRunning = true
 	e.stats.SuccessfulRequests.Store(0)
@@ -217,6 +291,9 @@ func (e *Engine) StartTest(rawConfig TestConfig) error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	e.cancelFunc = cancel
+	e.loadGeneration++
+	generation := e.loadGeneration
+	e.userCancels = nil
 	e.mu.Unlock()
 
 	if config.Algorithm != "" {
@@ -235,10 +312,14 @@ func (e *Engine) StartTest(rawConfig TestConfig) error {
 	}
 	metrics.SetTestRunning(preset, config.Concurrency, config.Duration, config.FileSizeKB)
 
+	durationLabel := fmt.Sprintf("%ds", config.Duration)
+	if config.Duration == 0 {
+		durationLabel = "infinite"
+	}
 	log.Printf(
-		"Starting test: concurrency=%d duration=%ds fileSizeKb=%d-%d warmupFiles=%d preset=%q endpoints=%v",
+		"Starting test: concurrency=%d duration=%s fileSizeKb=%d-%d warmupFiles=%d preset=%q endpoints=%v",
 		config.Concurrency,
-		config.Duration,
+		durationLabel,
 		config.FileSizeMinKB,
 		config.FileSizeMaxKB,
 		config.WarmupFiles,
@@ -264,15 +345,35 @@ func (e *Engine) StartTest(rawConfig TestConfig) error {
 	} else {
 		e.backendCounters = counters
 	}
+	waveIterations := resolvedWaveIterations(config)
+	e.mu.Lock()
 	e.testStartedAt = time.Now()
+	e.testDurationSec = config.Duration
+	e.waveCount = len(config.Phases)
+	e.plannedWaveIterations = waveIterations
+	if len(config.Phases) > 0 {
+		e.waveIteration = 1
+		e.waveIndex = 1
+	} else {
+		e.waveIteration = 0
+		e.waveIndex = 0
+	}
+	e.mu.Unlock()
 
 	var wg sync.WaitGroup
-	for i := 0; i < config.Concurrency; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			e.runVirtualUser(ctx, methodDescriptors, builder)
-		}()
+	e.scaleVirtualUsers(ctx, generation, config.Concurrency, &wg, methodDescriptors, builder)
+	if len(config.Phases) > 0 {
+		log.Printf(
+			"Wave cycle %s phase 1/%d: concurrency=%d fileSizeKb=%d-%d for %ds",
+			waveCycleLabel(1, waveIterations),
+			len(config.Phases),
+			config.Phases[0].Concurrency,
+			config.Phases[0].FileSizeMinKB,
+			config.Phases[0].FileSizeMaxKB,
+			config.Phases[0].DurationSec,
+		)
+		phases := append([]LoadPhase(nil), config.Phases...)
+		go e.runLoadWaves(ctx, generation, phases, waveIterations, &wg, methodDescriptors, builder)
 	}
 
 	if config.Duration > 0 {
@@ -283,6 +384,29 @@ func (e *Engine) StartTest(rawConfig TestConfig) error {
 			case <-timer.C:
 				log.Println("Test duration expired, stopping...")
 				e.StopTest()
+			case <-ctx.Done():
+			}
+		}()
+	}
+
+	if config.StopServer != "" {
+		serverName := config.StopServer
+		go func() {
+			timer := time.NewTimer(time.Duration(config.StopAfterSec) * time.Second)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+				stopCtx, stopCancel := context.WithTimeout(context.Background(), 20*time.Second)
+				err := e.SetServerPower(stopCtx, serverName, "stop")
+				stopCancel()
+				if err != nil {
+					log.Printf("Failed to stop %s for the scenario: %v", serverName, err)
+					return
+				}
+				e.mu.Lock()
+				e.serverToRestore = serverName
+				e.mu.Unlock()
+				log.Printf("Scenario stopped %s; it will be started again when the test ends", serverName)
 			case <-ctx.Done():
 			}
 		}()
@@ -346,7 +470,7 @@ func (e *Engine) runWarmup(ctx context.Context, methods map[string]*desc.MethodD
 
 	uploadMD, ok := methods[UploadFileRPC]
 	if ok {
-		log.Printf("Warmup: uploading %d files before download load", config.WarmupFiles)
+		log.Printf("Warmup: uploading %d files before download and delete load", config.WarmupFiles)
 		for i := 0; i < config.WarmupFiles; i++ {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -395,6 +519,7 @@ func (e *Engine) abortTest() {
 	}
 	e.isRunning = false
 	e.cancelFunc = nil
+	e.userCancels = nil
 	e.mu.Unlock()
 	metrics.SetTestStopped()
 }
@@ -425,10 +550,12 @@ func (e *Engine) finishTest() {
 	e.stats.Report = &report
 	e.isRunning = false
 	e.cancelFunc = nil
+	e.userCancels = nil
 	builder := e.builder
 	e.builder = nil
 	e.mu.Unlock()
 	metrics.SetTestStopped()
+	e.restoreStoppedServer()
 
 	if builder != nil && builder.DeleteMethodDesc != nil {
 		filesToDelete := builder.PopAllUploadedFiles()
@@ -447,14 +574,117 @@ func (e *Engine) finishTest() {
 		}
 	}
 	log.Printf(
-		"Test completed: RPS=%.2f p50=%.2fms p99=%.2fms errors=%.2f%% Jain=%.4f (available=%t)",
+		"Test completed: RPS=%.2f p50=%.2fms p95=%.2fms p99=%.2fms errors=%.2f%% Jain=%.4f (available=%t)",
 		report.RPS,
 		report.P50Millis,
+		report.P95Millis,
 		report.P99Millis,
 		report.ErrorRatePercent,
 		report.JainIndex,
 		report.JainAvailable,
 	)
+}
+
+func validatePhases(phases []LoadPhase) error {
+	for index, phase := range phases {
+		if phase.Concurrency < 1 {
+			return fmt.Errorf("wave %d needs at least 1 client", index+1)
+		}
+		if phase.DurationSec < 5 {
+			return fmt.Errorf("wave %d must last at least 5 seconds", index+1)
+		}
+		if phase.FileSizeMinKB < 1 || phase.FileSizeMaxKB < phase.FileSizeMinKB || phase.FileSizeMaxKB > MaxTestFileSizeKB() {
+			return fmt.Errorf("wave %d file size must be between 1 and %d KB, with min <= max", index+1, MaxTestFileSizeKB())
+		}
+	}
+	return nil
+}
+
+func resolvedWaveIterations(config TestConfig) int {
+	if len(config.Phases) == 0 || config.WaveIterations == nil || *config.WaveIterations < 0 {
+		return 1
+	}
+	return *config.WaveIterations
+}
+
+func waveCycleLabel(cycle int, iterations int) string {
+	if iterations == 0 {
+		return fmt.Sprintf("%d/infinite", cycle)
+	}
+	return fmt.Sprintf("%d/%d", cycle, iterations)
+}
+
+func (e *Engine) setWaveProgress(iteration int, index int) {
+	e.mu.Lock()
+	e.waveIteration = iteration
+	e.waveIndex = index
+	e.mu.Unlock()
+}
+
+func (e *Engine) runLoadWaves(ctx context.Context, generation uint64, phases []LoadPhase, iterations int, wg *sync.WaitGroup, methods map[string]*desc.MethodDescriptor, builder *PayloadBuilder) {
+	if len(phases) == 0 {
+		return
+	}
+	cycle := 1
+	position := 0
+	for {
+		timer := time.NewTimer(time.Duration(phases[position].DurationSec) * time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		if position == len(phases)-1 && iterations > 0 && cycle >= iterations {
+			log.Println("Wave iterations finished, stopping...")
+			e.StopTest()
+			return
+		}
+		nextPosition := position + 1
+		nextCycle := cycle
+		if nextPosition >= len(phases) {
+			nextPosition = 0
+			nextCycle = cycle + 1
+		}
+		phase := phases[nextPosition]
+		builder.SetFileSizeRange(phase.FileSizeMinKB, phase.FileSizeMaxKB)
+		e.scaleVirtualUsers(ctx, generation, phase.Concurrency, wg, methods, builder)
+		cycle = nextCycle
+		position = nextPosition
+		e.setWaveProgress(cycle, position+1)
+		log.Printf(
+			"Wave cycle %s phase %d/%d: concurrency=%d fileSizeKb=%d-%d for %ds",
+			waveCycleLabel(cycle, iterations),
+			position+1,
+			len(phases),
+			phase.Concurrency,
+			phase.FileSizeMinKB,
+			phase.FileSizeMaxKB,
+			phase.DurationSec,
+		)
+	}
+}
+
+func (e *Engine) scaleVirtualUsers(ctx context.Context, generation uint64, target int, wg *sync.WaitGroup, methods map[string]*desc.MethodDescriptor, builder *PayloadBuilder) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.loadGeneration != generation || !e.isRunning || ctx.Err() != nil {
+		return
+	}
+	for len(e.userCancels) < target {
+		userCtx, cancel := context.WithCancel(ctx)
+		e.userCancels = append(e.userCancels, cancel)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			e.runVirtualUser(userCtx, methods, builder)
+		}()
+	}
+	for len(e.userCancels) > target {
+		last := len(e.userCancels) - 1
+		e.userCancels[last]()
+		e.userCancels = e.userCancels[:last]
+	}
 }
 
 func (e *Engine) runVirtualUser(ctx context.Context, methodDescriptors map[string]*desc.MethodDescriptor, builder *PayloadBuilder) {
