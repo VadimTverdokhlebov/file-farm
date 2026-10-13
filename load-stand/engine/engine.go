@@ -66,6 +66,9 @@ type TestConfig struct {
 	WarmupFiles    int         `json:"warmupFiles"`
 	StopServer     string      `json:"stopServer"`
 	StopAfterSec   int         `json:"stopAfterSec"`
+	OutageServers  []string    `json:"outageServers,omitempty"`
+	OutageMinSec   int         `json:"outageMinSec"`
+	OutageMaxSec   int         `json:"outageMaxSec"`
 	Phases         []LoadPhase `json:"phases,omitempty"`
 	WaveIterations *int        `json:"waveIterations,omitempty"`
 }
@@ -90,7 +93,7 @@ type Engine struct {
 	loadBalancerURL       string
 	prometheusURL         string
 	docker                *dockerClient
-	serverToRestore       string
+	serversToRestore      map[string]struct{}
 	loadGeneration        uint64
 	userCancels           []context.CancelFunc
 	testStartedAt         time.Time
@@ -178,22 +181,40 @@ func (e *Engine) SetServerPower(ctx context.Context, name, action string) error 
 	return e.docker.setPower(ctx, name, action)
 }
 
-func (e *Engine) restoreStoppedServer() {
+func (e *Engine) markServerForRestore(name string) {
 	e.mu.Lock()
-	name := e.serverToRestore
-	e.serverToRestore = ""
-	e.mu.Unlock()
-	if name == "" {
-		return
+	defer e.mu.Unlock()
+	if e.serversToRestore == nil {
+		e.serversToRestore = map[string]struct{}{}
 	}
+	e.serversToRestore[name] = struct{}{}
+}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	if err := e.SetServerPower(ctx, name, "start"); err != nil {
-		log.Printf("Failed to start %s after the scenario: %v", name, err)
-		return
+func (e *Engine) unmarkServerForRestore(name string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.serversToRestore, name)
+}
+
+func (e *Engine) restoreStoppedServers() {
+	e.mu.Lock()
+	names := make([]string, 0, len(e.serversToRestore))
+	for name := range e.serversToRestore {
+		names = append(names, name)
 	}
-	log.Printf("Restored %s after the scenario", name)
+	e.serversToRestore = nil
+	e.mu.Unlock()
+
+	for _, name := range names {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		err := e.SetServerPower(ctx, name, "start")
+		cancel()
+		if err != nil {
+			log.Printf("Failed to start %s after the scenario: %v", name, err)
+			continue
+		}
+		log.Printf("Restored %s after the scenario", name)
+	}
 }
 
 func (e *Engine) getEndpointStats(endpoint string) *EndpointStats {
@@ -264,7 +285,11 @@ func (e *Engine) StartTest(rawConfig TestConfig) error {
 		e.mu.Unlock()
 		return err
 	}
-	if config.StopServer != "" {
+	if err := validateOutages(config); err != nil {
+		e.mu.Unlock()
+		return err
+	}
+	if config.StopServer != "" && len(config.OutageServers) == 0 {
 		if !allowedServerName(config.StopServer) {
 			e.mu.Unlock()
 			return fmt.Errorf("stopServer must be one of file-farm-server-1..4")
@@ -389,7 +414,10 @@ func (e *Engine) StartTest(rawConfig TestConfig) error {
 		}()
 	}
 
-	if config.StopServer != "" {
+	if len(config.OutageServers) > 0 {
+		servers := append([]string(nil), config.OutageServers...)
+		go e.runServerOutages(ctx, servers, config.OutageMinSec, config.OutageMaxSec)
+	} else if config.StopServer != "" {
 		serverName := config.StopServer
 		go func() {
 			timer := time.NewTimer(time.Duration(config.StopAfterSec) * time.Second)
@@ -403,9 +431,7 @@ func (e *Engine) StartTest(rawConfig TestConfig) error {
 					log.Printf("Failed to stop %s for the scenario: %v", serverName, err)
 					return
 				}
-				e.mu.Lock()
-				e.serverToRestore = serverName
-				e.mu.Unlock()
+				e.markServerForRestore(serverName)
 				log.Printf("Scenario stopped %s; it will be started again when the test ends", serverName)
 			case <-ctx.Done():
 			}
@@ -555,7 +581,7 @@ func (e *Engine) finishTest() {
 	e.builder = nil
 	e.mu.Unlock()
 	metrics.SetTestStopped()
-	e.restoreStoppedServer()
+	e.restoreStoppedServers()
 
 	if builder != nil && builder.DeleteMethodDesc != nil {
 		filesToDelete := builder.PopAllUploadedFiles()
@@ -583,6 +609,122 @@ func (e *Engine) finishTest() {
 		report.JainIndex,
 		report.JainAvailable,
 	)
+}
+
+func validateOutages(config TestConfig) error {
+	if len(config.OutageServers) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(config.OutageServers))
+	for _, name := range config.OutageServers {
+		if !allowedServerName(name) {
+			return fmt.Errorf("outage server %q must be one of file-farm-server-1..4", name)
+		}
+		if _, exists := seen[name]; exists {
+			return fmt.Errorf("outage server %q is listed twice", name)
+		}
+		seen[name] = struct{}{}
+	}
+	if config.OutageMinSec < 5 {
+		return fmt.Errorf("outageMinSec must be at least 5 seconds")
+	}
+	if config.OutageMaxSec < config.OutageMinSec {
+		return fmt.Errorf("outageMaxSec must be greater than or equal to outageMinSec")
+	}
+	if config.Duration > 0 && config.OutageMinSec >= config.Duration {
+		return fmt.Errorf("outageMinSec must be earlier than the test duration")
+	}
+	return nil
+}
+
+func outageDelay(rng *rand.Rand, minSec int, maxSec int) time.Duration {
+	seconds := minSec
+	if maxSec > minSec {
+		seconds += rng.Intn(maxSec - minSec + 1)
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func waitOutage(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func (e *Engine) pickRunningOutageServer(ctx context.Context, rng *rand.Rand, servers []string) (string, error) {
+	order := append([]string(nil), servers...)
+	rng.Shuffle(len(order), func(i int, j int) {
+		order[i], order[j] = order[j], order[i]
+	})
+	running := make([]string, 0, len(order))
+	var lastErr error
+	for _, name := range order {
+		up, err := e.docker.isRunning(ctx, name)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if up {
+			running = append(running, name)
+		}
+	}
+	if lastErr != nil && len(running) == 0 {
+		return "", lastErr
+	}
+	// Keep one selected server up when several are eligible, so the cluster does not go dark.
+	if len(servers) > 1 && len(running) < 2 {
+		return "", nil
+	}
+	if len(running) == 0 {
+		return "", nil
+	}
+	return running[rng.Intn(len(running))], nil
+}
+
+func (e *Engine) runServerOutages(ctx context.Context, servers []string, minSec int, maxSec int) {
+	defer e.restoreStoppedServers()
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	for {
+		if !waitOutage(ctx, outageDelay(rng, minSec, maxSec)) || ctx.Err() != nil {
+			return
+		}
+		name, err := e.pickRunningOutageServer(ctx, rng, servers)
+		if err != nil {
+			log.Printf("Failed to choose a server to stop: %v", err)
+			continue
+		}
+		if name == "" {
+			log.Printf("Skipped a server outage; fewer than two selected servers are running")
+			continue
+		}
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 20*time.Second)
+		err = e.SetServerPower(stopCtx, name, "stop")
+		stopCancel()
+		if err != nil {
+			log.Printf("Failed to stop %s for the scenario: %v", name, err)
+			continue
+		}
+		e.markServerForRestore(name)
+		downFor := outageDelay(rng, minSec, maxSec)
+		log.Printf("Scenario stopped %s; it will start again after %s", name, downFor)
+		if !waitOutage(ctx, downFor) || ctx.Err() != nil {
+			return
+		}
+		startCtx, startCancel := context.WithTimeout(context.Background(), 20*time.Second)
+		err = e.SetServerPower(startCtx, name, "start")
+		startCancel()
+		if err != nil {
+			log.Printf("Failed to start %s during the scenario: %v", name, err)
+			continue
+		}
+		e.unmarkServerForRestore(name)
+		log.Printf("Scenario started %s again", name)
+	}
 }
 
 func validatePhases(phases []LoadPhase) error {

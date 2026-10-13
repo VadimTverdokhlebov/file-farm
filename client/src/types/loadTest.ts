@@ -62,6 +62,9 @@ export interface TestConfig {
   warmupFiles?: number;
   stopServer?: string;
   stopAfterSec?: number;
+  outageServers?: string[];
+  outageMinSec?: number;
+  outageMaxSec?: number;
   waveIterations?: number;
   phases?: {
     concurrency: number;

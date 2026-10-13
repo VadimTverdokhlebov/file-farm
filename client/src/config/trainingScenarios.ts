@@ -13,7 +13,15 @@ const grpcMessageOverheadBytes = 64 * 1024;
 // Largest raw file whose base64 body fits in the server's default 4 MB gRPC message.
 export const maxTestFileSizeKb = Math.floor((((grpcMessageBytes - grpcMessageOverheadBytes) / 4) * 3) / 1024);
 
+export const trainingServerNames = [
+  'file-farm-server-1',
+  'file-farm-server-2',
+  'file-farm-server-3',
+  'file-farm-server-4',
+];
+
 export type ScenarioPhase = {
+  name?: string;
   concurrency: number;
   durationSec: number;
   fileSizeMinKb: number;
@@ -31,8 +39,10 @@ export type TrainingScenario = {
   fileSizeMinKb: number;
   fileSizeMaxKb: number;
   warmupFiles: number;
-  stopServer: string;
-  stopAfterSec: number;
+  randomOutages: boolean;
+  outageServers: string[];
+  outageMinSec: number;
+  outageMaxSec: number;
   waveIterations: number;
   phases: ScenarioPhase[];
 };
@@ -50,42 +60,29 @@ export const trainingScenarios: TrainingScenario[] = [
     fileSizeMinKb: 512,
     fileSizeMaxKb: 2048,
     warmupFiles: 8,
-    stopServer: '',
-    stopAfterSec: 0,
-    waveIterations: 1,
-    phases: [],
-  },
-  {
-    id: 'tight-memory',
-    name: 'Тесная память',
-    summary: 'Все методы и самые крупные файлы, которые ещё помещаются в лимит сообщения 4 МБ.',
-    weakness:
-      'Round robin и least request дают серверу с 512 МБ ту же долю, что и серверу с 1,5 ГБ, поэтому он исчерпывает память и начинает отвечать ошибками. EMA реагирует только когда задержка уже высокая. Weighted round robin держит фиксированную долю и после начала ошибок.',
-    endpoints: allEndpoints,
-    concurrency: 24,
-    duration: 180,
-    fileSizeMinKb: 2048,
-    fileSizeMaxKb: maxTestFileSizeKb,
-    warmupFiles: 8,
-    stopServer: '',
-    stopAfterSec: 0,
+    randomOutages: false,
+    outageServers: [],
+    outageMinSec: 15,
+    outageMaxSec: 40,
     waveIterations: 1,
     phases: [],
   },
   {
     id: 'server-dropout',
     name: 'Сервер выпадает',
-    summary: 'Все методы, затем один сервер останавливается и в конце теста запускается снова.',
+    summary: 'Все методы. Случайный сервер из выбранных останавливается и через случайное время из диапазона запускается снова.',
     weakness:
-      'Least request считает мёртвый сервер свободным и шлёт ему больше запросов. EMA принимает отсутствие задержки за быстрый ответ. Round robin и weighted round robin держат старую долю, пока не сработает проверка здоровья.',
+      'Least request считает мёртвый сервер свободным и шлёт ему больше запросов. EMA принимает отсутствие задержки за быстрый ответ. Round robin и weighted round robin держат старую долю, пока не сработает проверка здоровья, и не готовятся к тому, что следующим упадёт уже другой сервер.',
     endpoints: allEndpoints,
     concurrency: 30,
-    duration: 150,
+    duration: 180,
     fileSizeMinKb: 256,
     fileSizeMaxKb: 1024,
     warmupFiles: 8,
-    stopServer: 'file-farm-server-1',
-    stopAfterSec: 40,
+    randomOutages: true,
+    outageServers: [...trainingServerNames],
+    outageMinSec: 15,
+    outageMaxSec: 40,
     waveIterations: 1,
     phases: [],
   },
@@ -101,14 +98,40 @@ export const trainingScenarios: TrainingScenario[] = [
     fileSizeMinKb: 256,
     fileSizeMaxKb: 512,
     warmupFiles: 8,
-    stopServer: '',
-    stopAfterSec: 0,
+    randomOutages: false,
+    outageServers: [],
+    outageMinSec: 15,
+    outageMaxSec: 40,
     waveIterations: 1,
     phases: [
       { concurrency: 8, durationSec: 40, fileSizeMinKb: 256, fileSizeMaxKb: 512 },
       { concurrency: 48, durationSec: 50, fileSizeMinKb: 1024, fileSizeMaxKb: 2048 },
       { concurrency: 18, durationSec: 50, fileSizeMinKb: 2048, fileSizeMaxKb: maxTestFileSizeKb },
       { concurrency: 8, durationSec: 40, fileSizeMinKb: 256, fileSizeMaxKb: 512 },
+    ],
+  },
+  {
+    id: 'finale',
+    name: 'Финал',
+    summary: 'Один прогон: тихая нагрузка, скачок клиентов, крупные файлы и случайные остановки серверов.',
+    weakness:
+      'Классические алгоритмы ломаются в разных частях одного прогона. В тишине им хватает фиксированной доли по ядрам, на скачке серверы на 0,5 ядра упираются в потолок, на крупных файлах сервер с 512 МБ получает ту же долю, что и сервер с 1 ГБ, а после случайного падения мёртвый сервер ещё какое-то время получает вес. Модели нужно удержать каждый живой сервер ниже 95% CPU на всех этих сменах сразу.',
+    endpoints: allEndpoints,
+    concurrency: 36,
+    duration: 210,
+    fileSizeMinKb: 512,
+    fileSizeMaxKb: 2048,
+    warmupFiles: 8,
+    randomOutages: true,
+    outageServers: [...trainingServerNames],
+    outageMinSec: 20,
+    outageMaxSec: 45,
+    waveIterations: 1,
+    phases: [
+      { name: 'Тихая нагрузка', concurrency: 36, durationSec: 60, fileSizeMinKb: 512, fileSizeMaxKb: 2048 },
+      { name: 'Скачок клиентов', concurrency: 48, durationSec: 50, fileSizeMinKb: 1024, fileSizeMaxKb: 2048 },
+      { name: 'Крупные файлы', concurrency: 18, durationSec: 60, fileSizeMinKb: 2048, fileSizeMaxKb: maxTestFileSizeKb },
+      { name: 'Снова тишина', concurrency: 8, durationSec: 40, fileSizeMinKb: 256, fileSizeMaxKb: 512 },
     ],
   },
 ];

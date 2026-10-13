@@ -101,6 +101,36 @@
   grid-column: 1 / -1;
 }
 
+fieldset.load-field {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-inline-size: 0;
+}
+
+fieldset.load-field legend {
+  margin-bottom: 8px;
+  padding: 0;
+}
+
+.load-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+
+.load-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 400;
+}
+
+.load-check input {
+  width: auto;
+  padding: 0;
+}
+
 .load-field input,
 .load-field select {
   width: 100%;

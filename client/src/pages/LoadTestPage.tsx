@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '../components/Button';
 import { ServerCharts } from '../components/ServerCharts';
-import { ScenarioPhase, maxTestFileSizeKb, scenarioById, trainingScenarios } from '../config/trainingScenarios';
+import { ScenarioPhase, maxTestFileSizeKb, scenarioById, trainingScenarios, trainingServerNames } from '../config/trainingScenarios';
 import { useLoadTest } from '../hooks/useLoadTest';
 import './LoadTestPage.css';
 
@@ -27,8 +27,9 @@ export const LoadTestPage = () => {
   const [duration, setDuration] = useState(initialScenario.duration);
   const [fileSizeMinKb, setFileSizeMinKb] = useState(initialScenario.fileSizeMinKb);
   const [fileSizeMaxKb, setFileSizeMaxKb] = useState(initialScenario.fileSizeMaxKb);
-  const [stopServer, setStopServer] = useState(initialScenario.stopServer);
-  const [stopAfterSec, setStopAfterSec] = useState(initialScenario.stopAfterSec);
+  const [outageServers, setOutageServers] = useState<string[]>(initialScenario.outageServers);
+  const [outageMinSec, setOutageMinSec] = useState(initialScenario.outageMinSec);
+  const [outageMaxSec, setOutageMaxSec] = useState(initialScenario.outageMaxSec);
   const [waveIterations, setWaveIterations] = useState(initialScenario.waveIterations);
   const [phases, setPhases] = useState<ScenarioPhase[]>(initialScenario.phases);
   const [formError, setFormError] = useState<string | null>(null);
@@ -66,27 +67,35 @@ export const LoadTestPage = () => {
       return;
     }
     const waveDuration = phases.reduce((total, phase) => total + phase.durationSec, 0);
+    const plannedDuration = phases.length > 0 ? (waveIterations === 0 ? 0 : waveDuration * waveIterations) : duration;
     if (phases.length > 0 && waveIterations < 0) {
       setFormError('Число повторов круга не может быть отрицательным. 0 означает без конца.');
       return;
     }
-    if (scenario.stopServer && (stopAfterSec < 5 || (duration > 0 && stopAfterSec >= duration))) {
-      setFormError('Останавливайте сервер не раньше чем через 5 секунд и до конца теста.');
-      return;
+    if (scenario.randomOutages) {
+      if (outageServers.length === 0) {
+        setFormError('Отметьте хотя бы один сервер, который может остановиться.');
+        return;
+      }
+      if (outageMinSec < 5 || outageMaxSec < outageMinSec || (plannedDuration > 0 && outageMinSec >= plannedDuration)) {
+        setFormError('Диапазон остановки — от 5 секунд, максимум не меньше минимума и минимум меньше длительности теста.');
+        return;
+      }
     }
 
     setFormError(null);
     startTest({
       concurrency: phases.length > 0 ? phases[0].concurrency : concurrency,
-      duration: phases.length > 0 ? (waveIterations === 0 ? 0 : waveDuration * waveIterations) : duration,
+      duration: plannedDuration,
       endpoints: scenario.endpoints,
       algorithm: selectedAlgorithm,
       preset: scenario.id,
       fileSizeMinKb: phases.length > 0 ? phases[0].fileSizeMinKb : fileSizeMinKb,
       fileSizeMaxKb: phases.length > 0 ? phases[0].fileSizeMaxKb : fileSizeMaxKb,
       warmupFiles: scenario.warmupFiles,
-      stopServer: scenario.stopServer ? stopServer : '',
-      stopAfterSec: scenario.stopServer ? stopAfterSec : 0,
+      outageServers: scenario.randomOutages ? outageServers : undefined,
+      outageMinSec: scenario.randomOutages ? outageMinSec : undefined,
+      outageMaxSec: scenario.randomOutages ? outageMaxSec : undefined,
       waveIterations: phases.length > 0 ? waveIterations : undefined,
       phases: phases.length > 0 ? phases : undefined,
     });
@@ -99,11 +108,18 @@ export const LoadTestPage = () => {
     setDuration(next.duration);
     setFileSizeMinKb(next.fileSizeMinKb);
     setFileSizeMaxKb(next.fileSizeMaxKb);
-    setStopServer(next.stopServer);
-    setStopAfterSec(next.stopAfterSec);
+    setOutageServers(next.outageServers);
+    setOutageMinSec(next.outageMinSec);
+    setOutageMaxSec(next.outageMaxSec);
     setWaveIterations(next.waveIterations);
     setPhases(next.phases);
     setFormError(null);
+  };
+
+  const toggleOutageServer = (name: string) => {
+    setOutageServers((current) => (
+      current.includes(name) ? current.filter((item) => item !== name) : [...current, name]
+    ));
   };
 
   const updatePhase = (index: number, patch: Partial<ScenarioPhase>) => {
@@ -170,7 +186,7 @@ export const LoadTestPage = () => {
               <div className="load-phases">
                 {phases.map((phase, index) => (
                   <div className="load-phase" key={`${scenario.id}-${index}`}>
-                    <h3>Волна {index + 1}</h3>
+                    <h3>{phase.name ?? `Волна ${index + 1}`}</h3>
                     <NumberField
                       id={`phase-${index}-concurrency`}
                       label="Клиенты"
@@ -245,32 +261,18 @@ export const LoadTestPage = () => {
                 disabled={status.isRunning}
                 onChange={setFileSizeMaxKb}
               />
-              {scenario.stopServer && (
-                <>
-                  <label className="load-field" htmlFor="stopServer">
-                    Сервер, который остановить
-                    <select
-                      id="stopServer"
-                      value={stopServer}
-                      disabled={status.isRunning}
-                      onChange={(event) => setStopServer(event.target.value)}
-                    >
-                      {servers.map((server) => (
-                        <option key={server.name} value={server.name}>{server.name}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <NumberField
-                    id="stopAfterSec"
-                    label="Остановить через, секунды"
-                    min={5}
-                    value={stopAfterSec}
-                    disabled={status.isRunning}
-                    onChange={setStopAfterSec}
-                  />
-                </>
-              )}
             </div>
+          )}
+          {scenario.randomOutages && (
+            <OutageFields
+              servers={outageServers}
+              minSec={outageMinSec}
+              maxSec={outageMaxSec}
+              disabled={status.isRunning}
+              onToggle={toggleOutageServer}
+              onMinChange={setOutageMinSec}
+              onMaxChange={setOutageMaxSec}
+            />
           )}
           {phases.length === 0 && (
             <p className="load-copy">0 секунд — тест идёт, пока не нажмёте Stop.</p>
@@ -443,6 +445,67 @@ export const LoadTestPage = () => {
     </div>
   );
 };
+
+function OutageFields({
+  servers,
+  minSec,
+  maxSec,
+  disabled,
+  onToggle,
+  onMinChange,
+  onMaxChange,
+}: {
+  servers: string[];
+  minSec: number;
+  maxSec: number;
+  disabled: boolean;
+  onToggle: (name: string) => void;
+  onMinChange: (value: number) => void;
+  onMaxChange: (value: number) => void;
+}) {
+  return (
+    <>
+      <p className="load-copy">
+        Случайный отмеченный сервер останавливается, затем через случайное время из диапазона запускается снова.
+        Следующая остановка ждёт новое случайное время из того же диапазона. Если отмечено несколько серверов, последний работающий не выключается.
+        В конце теста остановленный сервер запускается.
+      </p>
+      <div className="load-fields">
+        <NumberField
+          id="outageMinSec"
+          label="Пауза от, секунды"
+          min={5}
+          value={minSec}
+          disabled={disabled}
+          onChange={onMinChange}
+        />
+        <NumberField
+          id="outageMaxSec"
+          label="Пауза до, секунды"
+          min={5}
+          value={maxSec}
+          disabled={disabled}
+          onChange={onMaxChange}
+        />
+        <fieldset className="load-field load-field-wide" disabled={disabled}>
+          <legend>Серверы, которые могут упасть</legend>
+          <div className="load-checks">
+            {trainingServerNames.map((name) => (
+              <label className="load-check" key={name}>
+                <input
+                  type="checkbox"
+                  checked={servers.includes(name)}
+                  onChange={() => onToggle(name)}
+                />
+                {name}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      </div>
+    </>
+  );
+}
 
 function NumberField({
   id,
