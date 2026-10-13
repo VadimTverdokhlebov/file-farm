@@ -11,6 +11,7 @@ services:
       - .env
     volumes:
       - ../protos:/proto:ro
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - appnet
     restart: unless-stopped

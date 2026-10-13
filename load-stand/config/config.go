@@ -15,6 +15,7 @@ type Config struct {
 	EnvoyAdminURL   string
 	LoadBalancerURL string
 	PrometheusURL   string
+	DockerSocket    string
 }
 
 func getEnv(key, fallback string) string {
@@ -37,5 +38,6 @@ func New() *Config {
 		EnvoyAdminURL:   getEnv("ENVOY_ADMIN_URL", "http://localhost:9901"),
 		LoadBalancerURL: getEnv("LB_CONTROLLER_URL", "http://localhost:9094"),
 		PrometheusURL:   getEnv("PROMETHEUS_URL", "http://file-farm-prometheus:9090"),
+		DockerSocket:    getEnv("DOCKER_SOCKET", "/var/run/docker.sock"),
 	}
 }

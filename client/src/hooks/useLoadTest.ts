@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { TestStatus, TestConfig, LoadPreset, BalancerAlgorithm, BalancerConfiguration, ServerStatus } from '../types/loadTest';
-import { fetchLoadStandJson, getLoadStandWsUrl } from '../config/loadStand';
+import { fetchLoadStandJson, getLoadStandWsUrl, postLoadStandJson } from '../config/loadStand';
 
 interface UseLoadTestReturn {
   endpoints: string[];
@@ -11,6 +11,8 @@ interface UseLoadTestReturn {
   status: TestStatus;
   startTest: (config: TestConfig) => void;
   stopTest: () => void;
+  setServerPower: (name: string, action: 'start' | 'stop') => Promise<void>;
+  pendingServer: string | null;
   error: string | null;
   isLoading: boolean;
 }
@@ -39,6 +41,7 @@ const defaultServers = (): ServerStatus[] =>
     ram: 0,
     cpu: 0,
     status: 'down',
+    running: false,
   }));
 
 export const useLoadTest = (): UseLoadTestReturn => {
@@ -52,6 +55,7 @@ export const useLoadTest = (): UseLoadTestReturn => {
   });
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [pendingServer, setPendingServer] = useState<string | null>(null);
   const ws = useRef<WebSocket | null>(null);
 
   useEffect(() => {
@@ -122,6 +126,29 @@ export const useLoadTest = (): UseLoadTestReturn => {
   const startTest = useCallback((config: TestConfig) => sendCommand('start', config), [sendCommand]);
   const stopTest = useCallback(() => sendCommand('stop'), [sendCommand]);
 
+  const setServerPower = useCallback(async (name: string, action: 'start' | 'stop') => {
+    setPendingServer(name);
+    setError(null);
+    try {
+      await postLoadStandJson(`/api/servers/${encodeURIComponent(name)}`, { action });
+      setStatus((current) => ({
+        ...current,
+        stats: {
+          ...current.stats,
+          Servers: current.stats.Servers?.map((server) => (
+            server.name === name
+              ? { ...server, running: action === 'start', status: action === 'start' ? server.status : 'down' }
+              : server
+          )),
+        },
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to change server power');
+    } finally {
+      setPendingServer((current) => (current === name ? null : current));
+    }
+  }, []);
+
   return {
     endpoints,
     presets,
@@ -131,6 +158,8 @@ export const useLoadTest = (): UseLoadTestReturn => {
     status,
     startTest,
     stopTest,
+    setServerPower,
+    pendingServer,
     error,
     isLoading,
   };

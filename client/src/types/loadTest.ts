@@ -7,6 +7,7 @@ export interface ServerStatus {
   ram: number;
   cpu: number;
   status: string;
+  running?: boolean;
 }
 
 export interface TestStats {

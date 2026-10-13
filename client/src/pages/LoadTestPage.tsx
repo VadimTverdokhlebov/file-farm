@@ -13,6 +13,8 @@ export const LoadTestPage = () => {
     status,
     startTest,
     stopTest,
+    setServerPower,
+    pendingServer,
     error,
     isLoading,
   } = useLoadTest();
@@ -196,10 +198,14 @@ export const LoadTestPage = () => {
                   <th>RAM</th>
                   <th>CPU</th>
                   <th>Status</th>
+                  <th>Power</th>
                 </tr>
               </thead>
               <tbody>
-                {servers.map((server) => (
+                {servers.map((server) => {
+                  const running = server.running ?? server.status === 'up';
+                  const pending = pendingServer === server.name;
+                  return (
                   <tr key={server.name} className={server.status === 'up' ? '' : 'load-row-down'}>
                     <td>{server.name}</td>
                     <td>{server.rps?.toFixed(1) || '0.0'}</td>
@@ -215,8 +221,18 @@ export const LoadTestPage = () => {
                         {server.status === 'up' ? 'Online' : 'Offline'}
                       </span>
                     </td>
+                    <td>
+                      <Button
+                        variant={running ? 'danger' : 'primary'}
+                        disabled={pendingServer !== null}
+                        onClick={() => setServerPower(server.name, running ? 'stop' : 'start')}
+                      >
+                        {pending ? (running ? 'Stopping...' : 'Starting...') : (running ? 'Turn off' : 'Turn on')}
+                      </Button>
+                    </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

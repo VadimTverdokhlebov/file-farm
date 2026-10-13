@@ -5,6 +5,7 @@ import (
 	"load-stand/engine"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -53,6 +54,30 @@ func (h *Handler) HandleAlgorithms(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(configuration)
+}
+
+func (h *Handler) HandleServerPower(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	name := strings.TrimPrefix(r.URL.Path, "/api/servers/")
+	var body struct {
+		Action string `json:"action"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.engine.SetServerPower(r.Context(), name, body.Action); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"name": name, "action": body.Action})
 }
 
 func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {

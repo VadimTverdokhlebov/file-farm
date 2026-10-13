@@ -179,7 +179,12 @@
 .load-card table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 640px;
+  min-width: 860px;
+}
+
+.load-card td .btn {
+  padding: 6px 12px;
+  font-size: 14px;
 }
 
 .load-card th,

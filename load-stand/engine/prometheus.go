@@ -15,14 +15,15 @@ import (
 const serverCount = 4
 
 type ServerStatus struct {
-	Name   string  `json:"name"`
-	RPS    float64 `json:"rps"`
-	Error  float64 `json:"error"`
-	EDS    float64 `json:"eds"`
-	Mem    float64 `json:"mem"`
-	RAM    float64 `json:"ram"`
-	CPU    float64 `json:"cpu"`
-	Status string  `json:"status"` // "up" or "down"
+	Name    string  `json:"name"`
+	RPS     float64 `json:"rps"`
+	Error   float64 `json:"error"`
+	EDS     float64 `json:"eds"`
+	Mem     float64 `json:"mem"`
+	RAM     float64 `json:"ram"`
+	CPU     float64 `json:"cpu"`
+	Status  string  `json:"status"` // "up" or "down"
+	Running bool    `json:"running"`
 }
 
 var prometheusClient = &http.Client{Timeout: 2 * time.Second}

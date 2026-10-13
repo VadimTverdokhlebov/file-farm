@@ -20,6 +20,21 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+export async function postLoadStandJson<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`${getLoadStandHttpUrl()}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const message = (await response.text()).trim();
+    throw new Error(message || `Load stand request failed (${response.status})`);
+  }
+
+  return parseJsonResponse<T>(response);
+}
+
 export async function fetchLoadStandJson<T>(path: string): Promise<T> {
   const response = await fetch(`${getLoadStandHttpUrl()}${path}`);
 

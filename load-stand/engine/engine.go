@@ -72,12 +72,13 @@ type Engine struct {
 	envoyAdminURL    string
 	loadBalancerURL  string
 	prometheusURL    string
+	docker           *dockerClient
 	testStartedAt    time.Time
 	backendCounters  map[string]envoyEndpointCounters
 	builder          *PayloadBuilder
 }
 
-func NewEngine(target string, protoDir string, envoyAdminURL string, loadBalancerURL string, prometheusURL string) (*Engine, error) {
+func NewEngine(target string, protoDir string, envoyAdminURL string, loadBalancerURL string, prometheusURL string, dockerSocket string) (*Engine, error) {
 	endpoints, err := ParseProtoFiles(protoDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize engine: %w", err)
@@ -103,6 +104,7 @@ func NewEngine(target string, protoDir string, envoyAdminURL string, loadBalance
 		envoyAdminURL:    envoyAdminURL,
 		loadBalancerURL:  loadBalancerURL,
 		prometheusURL:    prometheusURL,
+		docker:           newDockerClient(dockerSocket),
 		stats: Stats{
 			EndpointStats:  make(map[string]*EndpointStats),
 			latencyBuckets: make([]atomic.Int64, len(latencyBucketBounds)+1),
@@ -116,6 +118,11 @@ func (e *Engine) GetAvailableMethods() []string {
 
 func (e *Engine) GetStatus() (bool, StatusSnapshot) {
 	servers, _ := FetchServerStatuses(e.prometheusURL)
+	if states, err := e.docker.running(context.Background()); err == nil {
+		applyContainerPower(servers, states)
+	} else {
+		applyContainerPower(servers, nil)
+	}
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -127,6 +134,10 @@ func (e *Engine) GetStatus() (bool, StatusSnapshot) {
 		Report:             e.stats.Report,
 		Servers:            servers,
 	}
+}
+
+func (e *Engine) SetServerPower(ctx context.Context, name, action string) error {
+	return e.docker.setPower(ctx, name, action)
 }
 
 func (e *Engine) getEndpointStats(endpoint string) *EndpointStats {
