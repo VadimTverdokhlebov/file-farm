@@ -103,19 +103,20 @@ function MetricChart({
   windowStart: number;
   windowMs: number;
 }) {
-  const series = metric === 'totalRps'
+  const plotW = VIEW_W - PAD.left - PAD.right;
+  const plotH = VIEW_H - PAD.top - PAD.bottom;
+  const rawSeries = metric === 'totalRps'
     ? [history.map((point) => totalRps(point))]
     : names.map((name) => history.map((point, index) => (
       metric === 'eds' ? weightValue(history, index, name) : metricValue(point, name, metric)
     )));
-  const finite = series.flat().filter((value): value is number => value != null);
+  const times = history.map((point) => point.at);
+  const series = rawSeries.map((values) => smoothSeries(values, times, windowStart, windowMs, plotW));
+  const finite = series.flat(2).map((point) => point.value);
   const peak = finite.length === 0 ? 0 : Math.max(0, ...finite);
   const max = scaleMax(peak, fixedMax);
-  const plotW = VIEW_W - PAD.left - PAD.right;
-  const plotH = VIEW_H - PAD.top - PAD.bottom;
   const ticks = [max, max / 2, 0];
   const colors = metric === 'totalRps' ? [TOTAL_COLOR] : SERVER_COLORS;
-  const times = history.map((point) => point.at);
 
   return (
     <svg viewBox={`0 0 ${VIEW_W} ${VIEW_H}`} role="img" aria-label={metric}>
@@ -135,14 +136,14 @@ function MetricChart({
           {tick.label}
         </text>
       ))}
-      {series.map((values, index) => (
-        segments(values, times, windowStart, windowMs, plotW, max, plotH).map((points, segment) => (
+      {series.map((runs, index) => (
+        runs.map((run, segment) => (
           <polyline
             key={`${index}-${segment}`}
-            points={points}
+            points={run.map((point) => `${xOf(point.at, windowStart, windowMs, plotW)},${yOf(point.value, max, plotH)}`).join(' ')}
             fill="none"
             stroke={colors[index % colors.length]}
-            strokeWidth="2"
+            strokeWidth="1.5"
             strokeLinejoin="round"
             strokeLinecap="round"
           />
@@ -152,34 +153,86 @@ function MetricChart({
   );
 }
 
-function segments(
+type PlotPoint = { at: number; value: number };
+
+// Several one-second samples land on the same pixel on a long window and the
+// stroke piles up into a thick band. Average each pixel column so the line
+// stays thin and readable.
+function smoothSeries(
   values: Array<number | null>,
   times: number[],
   windowStart: number,
   windowMs: number,
   plotW: number,
-  max: number,
-  plotH: number,
-): string[] {
-  const parts: string[] = [];
-  let current: string[] = [];
-  const flush = () => {
-    if (current.length > 0) {
-      parts.push(current.join(' '));
-      current = [];
-    }
-  };
+): PlotPoint[][] {
+  const bucketMs = Math.max(windowMs / Math.max(plotW / 3, 1), 1);
+  const runs: PlotPoint[][] = [];
+  let run: PlotPoint[] = [];
+  let bucket = -1;
+  let sum = 0;
+  let count = 0;
+  let atSum = 0;
+  let tip: PlotPoint | null = null;
 
-  values.forEach((value, pointIndex) => {
-    if (value == null) {
-      flush();
+  const closeBucket = () => {
+    if (count === 0) {
       return;
     }
-    const x = xOf(times[pointIndex] ?? windowStart, windowStart, windowMs, plotW);
-    current.push(`${x},${yOf(value, max, plotH)}`);
+    run.push({ at: atSum / count, value: sum / count });
+    sum = 0;
+    count = 0;
+    atSum = 0;
+  };
+  const closeRun = () => {
+    closeBucket();
+    if (run.length > 0) {
+      runs.push(soften(run, tip));
+      run = [];
+    }
+    bucket = -1;
+    tip = null;
+  };
+
+  values.forEach((value, index) => {
+    const at = times[index];
+    if (value == null || !Number.isFinite(at)) {
+      closeRun();
+      return;
+    }
+    const nextBucket = Math.floor((at - windowStart) / bucketMs);
+    if (bucket !== -1 && nextBucket !== bucket) {
+      closeBucket();
+    }
+    bucket = nextBucket;
+    sum += value;
+    count += 1;
+    atSum += at;
+    tip = { at, value };
   });
-  flush();
-  return parts;
+  closeRun();
+  return runs;
+}
+
+function soften(run: PlotPoint[], tip: PlotPoint | null): PlotPoint[] {
+  const smoothed = run.length < 3
+    ? run.slice()
+    : run.map((point, index) => {
+      if (index === 0 || index === run.length - 1) {
+        return point;
+      }
+      const value = (run[index - 1].value + point.value * 2 + run[index + 1].value) / 4;
+      return { at: point.at, value };
+    });
+  if (!tip || smoothed.length === 0) {
+    return smoothed;
+  }
+  const end = smoothed[smoothed.length - 1];
+  if (tip.at > end.at) {
+    smoothed.push(tip);
+  } else {
+    smoothed[smoothed.length - 1] = tip;
+  }
+  return smoothed;
 }
 
 function timeTicks(
