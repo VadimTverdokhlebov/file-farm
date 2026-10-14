@@ -89,6 +89,99 @@ def equal_eds_weights(backends: tuple[Backend, ...], *, weight_total: int) -> di
     return weights
 
 
+def step_toward_even_cpu(
+    backends: tuple[Backend, ...],
+    current: dict[str, int],
+    cpu_utilization: tuple[float, ...],
+    alive_mask: tuple[bool, ...],
+    logits: tuple[float, ...],
+    *,
+    weight_total: int,
+    max_step: int = 20,
+    cpu_gain: float = 0.2,
+) -> dict[str, int]:
+    """Move one capped step from the current weights toward equal CPU.
+
+    A server at 40% with weight 70 gains at most max_step, not a new softmax share.
+    The network logit is only a nudge inside that same cap. A stopped server drops
+    to 0 so traffic leaves it; that mass is the one case that may exceed the cap.
+    """
+    if len(cpu_utilization) != len(backends) or len(alive_mask) != len(backends):
+        raise ValueError("CPU and health must match backend count")
+    if max_step < 0:
+        raise ValueError("max_step must be non-negative")
+    if weight_total <= 0:
+        raise ValueError("weight_total must be positive")
+
+    healthy = [index for index, is_alive in enumerate(alive_mask) if is_alive]
+    weights = {backend.host: 0 for backend in backends}
+    if not healthy:
+        return weights
+    if weight_total < len(healthy):
+        raise ValueError("weight_total must be at least the number of healthy backends")
+
+    cpus = [
+        min(max(cpu_utilization[index], 0.0), 1.0)
+        if math.isfinite(cpu_utilization[index])
+        else 0.0
+        for index in healthy
+    ]
+    mean_cpu = sum(cpus) / len(cpus)
+    deltas: list[float] = []
+    for index, cpu in zip(healthy, cpus):
+        logit = logits[index] if index < len(logits) and math.isfinite(logits[index]) else 0.0
+        nudge = math.tanh(logit) * (max_step / 2.0)
+        raw = cpu_gain * (mean_cpu - cpu) * weight_total + nudge
+        deltas.append(min(max(raw, -float(max_step)), float(max_step)))
+
+    floors: dict[str, int] = {}
+    ceilings: dict[str, int] = {}
+    hosts: list[str] = []
+    for index, delta in zip(healthy, deltas):
+        host = backends[index].host
+        base = max(current.get(host, 0), 0)
+        floor = max(1, base - max_step)
+        ceiling = base + max_step
+        weights[host] = min(max(int(round(base + delta)), floor), ceiling)
+        floors[host] = floor
+        ceilings[host] = ceiling
+        hosts.append(host)
+
+    _fit_weight_total(weights, hosts, floors, ceilings, weight_total)
+    return weights
+
+
+def _fit_weight_total(
+    weights: dict[str, int],
+    hosts: list[str],
+    floors: dict[str, int],
+    ceilings: dict[str, int],
+    weight_total: int,
+) -> None:
+    # ±1 adjustments stay inside the step cap. If a stopped server freed more
+    # weight than the cap can absorb, the ceilings are relaxed one point at a time.
+    for _ in range(weight_total * 4):
+        total = sum(weights[host] for host in hosts)
+        if total == weight_total:
+            return
+        if total < weight_total:
+            room = [host for host in hosts if weights[host] < ceilings[host]]
+            if not room:
+                host = hosts[0]
+                ceilings[host] += 1
+                room = [host]
+            host = max(room, key=lambda item: ceilings[item] - weights[item])
+            weights[host] += 1
+            continue
+        room = [host for host in hosts if weights[host] > floors[host]]
+        if not room:
+            room = [host for host in hosts if weights[host] > 1]
+        if not room:
+            return
+        host = max(room, key=lambda item: weights[item] - floors[item])
+        weights[host] -= 1
+
+
 def masked_logits_to_eds_weights(
     backends: tuple[Backend, ...],
     raw_logits: tuple[float, ...],

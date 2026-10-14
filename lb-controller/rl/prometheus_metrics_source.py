@@ -1,4 +1,5 @@
 import math
+import re
 import time
 
 from config import Backend
@@ -23,6 +24,12 @@ def cpu_utilization_ratio(usage_cores: float, limit_cores: float) -> float:
     return min(usage_cores / limit_cores, 1.0)
 
 
+def validate_rate_window(window: str) -> str:
+    if re.fullmatch(r"\d+[smh]", window) is None:
+        raise ValueError("rate window must look like 20s, 1m, or 1h")
+    return window
+
+
 def backend_instance_id(backend: Backend) -> str:
     return backend.name.rsplit("-", 1)[-1]
 
@@ -36,6 +43,7 @@ class PrometheusMetricsSource(MetricsSource):
         cpu_limits: tuple[float, ...],
         memory_limits_bytes: tuple[float, ...],
         cpu_limit_normalizer: float = 4.0,
+        rate_window: str = "1m",
     ) -> None:
         if len(cpu_limits) != len(backends) or len(memory_limits_bytes) != len(backends):
             raise ValueError("Capacity arrays must match backend count")
@@ -44,6 +52,7 @@ class PrometheusMetricsSource(MetricsSource):
         self._cpu_limits = cpu_limits
         self._memory_limits_bytes = memory_limits_bytes
         self._cpu_limit_normalizer = cpu_limit_normalizer
+        self._rate_window = validate_rate_window(rate_window)
         self._client = PrometheusClient(prometheus_url)
         self._step_index = 0
 
@@ -63,11 +72,11 @@ class PrometheusMetricsSource(MetricsSource):
                 f'file_farm_grpc_active_requests{{exported_instance="{instance_id}"}}'
             )
             request_rate_rps = self._client.query_scalar(
-                f'sum(rate(file_farm_grpc_requests_total{{exported_instance="{instance_id}"}}[1m]))'
+                f'sum(rate(file_farm_grpc_requests_total{{exported_instance="{instance_id}"}}[{self._rate_window}]))'
             )
             latency_p99_seconds = self._client.query_scalar(
                 "histogram_quantile(0.99, "
-                f'sum by (le) (rate(file_farm_grpc_request_duration_seconds_bucket{{exported_instance="{instance_id}"}}[1m]))'
+                f'sum by (le) (rate(file_farm_grpc_request_duration_seconds_bucket{{exported_instance="{instance_id}"}}[{self._rate_window}]))'
                 ")",
                 default=0.05,
             )
@@ -113,10 +122,10 @@ class PrometheusMetricsSource(MetricsSource):
 
     def _query_error_rate(self, instance_id: str) -> float:
         errors = self._client.query_scalar(
-            f'sum(rate(file_farm_grpc_requests_total{{exported_instance="{instance_id}",status="error"}}[1m]))'
+            f'sum(rate(file_farm_grpc_requests_total{{exported_instance="{instance_id}",status="error"}}[{self._rate_window}]))'
         )
         total = self._client.query_scalar(
-            f'sum(rate(file_farm_grpc_requests_total{{exported_instance="{instance_id}"}}[1m]))'
+            f'sum(rate(file_farm_grpc_requests_total{{exported_instance="{instance_id}"}}[{self._rate_window}]))'
         )
         if total <= 0.0:
             return 0.0
@@ -127,12 +136,12 @@ class PrometheusMetricsSource(MetricsSource):
         # would count the same cores twice and push a 2-CPU server over 100%.
         usage = self._client.query_scalar(
             "max(rate(container_cpu_usage_seconds_total"
-            f'{{name="{container_name}",cpu="total"}}[1m]))'
+            f'{{name="{container_name}",cpu="total"}}[{self._rate_window}]))'
         )
         if usage <= 0.0:
             usage = self._client.query_scalar(
                 "max(rate(container_cpu_usage_seconds_total"
-                f'{{name="{container_name}"}}[1m]))'
+                f'{{name="{container_name}"}}[{self._rate_window}]))'
             )
         measured_limit = self._query_cpu_limit_cores(container_name)
         limit = measured_limit if measured_limit > 0.0 else cpu_limit
@@ -151,10 +160,10 @@ class PrometheusMetricsSource(MetricsSource):
 
     def _query_cpu_throttling(self, container_name: str) -> float:
         throttled = self._client.query_scalar(
-            f'rate(container_cpu_cfs_throttled_seconds_total{{name="{container_name}"}}[1m])'
+            f'rate(container_cpu_cfs_throttled_seconds_total{{name="{container_name}"}}[{self._rate_window}])'
         )
         usage = self._client.query_scalar(
-            f'rate(container_cpu_usage_seconds_total{{name="{container_name}"}}[1m])',
+            f'rate(container_cpu_usage_seconds_total{{name="{container_name}"}}[{self._rate_window}])',
             default=1.0,
         )
         if usage <= 0.0:
@@ -172,9 +181,9 @@ class PrometheusMetricsSource(MetricsSource):
     def _query_disk_io(self, container_name: str) -> float:
         return self._client.query_scalar(
             "sum(rate(container_fs_reads_bytes_total"
-            f'{{name="{container_name}"}}[1m])) + '
+            f'{{name="{container_name}"}}[{self._rate_window}])) + '
             "sum(rate(container_fs_writes_bytes_total"
-            f'{{name="{container_name}"}}[1m]))'
+            f'{{name="{container_name}"}}[{self._rate_window}]))'
         )
 
     def _query_is_healthy(self, target_instance: str) -> bool:
@@ -186,7 +195,7 @@ class PrometheusMetricsSource(MetricsSource):
     def _query_cluster_latency_p99(self) -> float:
         return self._client.query_scalar(
             "histogram_quantile(0.99, "
-            'sum by (le) (rate(file_farm_grpc_request_duration_seconds_bucket{job="server"}[1m]))'
+            f'sum by (le) (rate(file_farm_grpc_request_duration_seconds_bucket{{job="server"}}[{self._rate_window}]))'
             ")",
             default=0.05,
         )

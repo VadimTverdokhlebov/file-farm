@@ -74,8 +74,38 @@ func FetchServerStatuses(prometheusURL string) ([]ServerStatus, error) {
 		server.RAM = lookupServerValueOrZero(results, "ram", name)
 		servers = append(servers, server)
 	}
+	preserveEndpointWeights(servers)
 
 	return servers, nil
+}
+
+var (
+	weightMu            sync.Mutex
+	lastEndpointWeights = map[string]float64{}
+)
+
+// preserveEndpointWeights keeps the last positive EDS weights when a scrape
+// comes back empty. Stopping one server can make that query fail, and a miss
+// would otherwise draw every weight as 0.
+func preserveEndpointWeights(servers []ServerStatus) {
+	weightMu.Lock()
+	defer weightMu.Unlock()
+
+	positive := false
+	for _, server := range servers {
+		if server.EDS > 0 {
+			positive = true
+			lastEndpointWeights[server.Name] = server.EDS
+		}
+	}
+	if positive {
+		return
+	}
+	for i := range servers {
+		if value, ok := lastEndpointWeights[servers[i].Name]; ok {
+			servers[i].EDS = value
+		}
+	}
 }
 
 func queryPrometheus(prometheusURL, query string) (map[string]float64, error) {

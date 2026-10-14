@@ -15,7 +15,7 @@ def parse_capacity_lists(backends) -> tuple[tuple[float, ...], tuple[float, ...]
     return cpu_limits, memory_limits_bytes
 
 
-def create_metrics_source(backends) -> MetricsSource:
+def create_metrics_source(backends, rate_window: str = "1m") -> MetricsSource:
     cpu_limits, memory_limits_bytes = parse_capacity_lists(backends)
 
     if METRICS_SOURCE == "stub":
@@ -30,6 +30,7 @@ def create_metrics_source(backends) -> MetricsSource:
         PROMETHEUS_URL,
         cpu_limits=cpu_limits,
         memory_limits_bytes=memory_limits_bytes,
+        rate_window=rate_window,
     )
 
 

@@ -6,7 +6,7 @@ from balancers.least_request_balancer import LeastRequestBalancer
 from balancers.round_robin import RoundRobinBalancer
 from balancers.random_choice_balancer import RandomChoiceBalancer
 from balancers.weighted_round_robin import WeightedRoundRobinBalancer
-from config import DQN_WEIGHT_TOTAL, EMA_ALPHA
+from config import AM_PPO_METRICS_WINDOW, DQN_WEIGHT_TOTAL, EMA_ALPHA
 
 __all__ = [
     "Balancer",
@@ -50,7 +50,7 @@ def create_balancer(algorithm: str, backends) -> Balancer:
     if algorithm == "am_ppo":
         return AMPPOBalancer(
             backends,
-            metrics_source=create_metrics_source(backends),
+            metrics_source=create_metrics_source(backends, rate_window=AM_PPO_METRICS_WINDOW),
             weight_total=DQN_WEIGHT_TOTAL,
         )
 

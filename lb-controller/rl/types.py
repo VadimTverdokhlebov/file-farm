@@ -78,8 +78,11 @@ class ClusterState:
         return features
 
     def to_am_ppo_feature_vector(self) -> list[float]:
-        max_cpu_limit = max((server.cpu_limit_cores for server in self.servers), default=1.0)
-        max_cpu_limit = max(max_cpu_limit, 1e-6)
+        """Per-server observed state. Length is 5 * N, so N may change.
+
+        CPU limit is not included. Utilization is already a fraction of whatever
+        limit the server has, and the policy has to react to that fraction.
+        """
         features: list[float] = []
 
         for server in self.servers:
@@ -90,7 +93,6 @@ class ClusterState:
                     _log_scale(server.request_rate_rps, 100.0),
                     _log_scale(server.active_requests, 100.0),
                     1.0 if server.is_healthy else 0.0,
-                    _clamp(server.cpu_limit_cores / max_cpu_limit),
                 ]
             )
 

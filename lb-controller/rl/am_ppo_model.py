@@ -13,6 +13,9 @@ from rl.weights import masked_logits_to_eds_weights
 
 logger = logging.getLogger("lb-controller.am_ppo")
 
+# cpu, disk, rps, active requests, health. No capacity hint.
+_FEATURES_PER_SERVER = 5
+
 
 @dataclass(frozen=True)
 class PpoAction:
@@ -45,7 +48,7 @@ class AMPPORLModel(nn.Module):
         value_coefficient: float,
         entropy_coefficient: float,
         model_path: str = "am_ppo_model.pt",
-        feature_per_server: int = 6,
+        feature_per_server: int = _FEATURES_PER_SERVER,
     ) -> None:
         super().__init__()
         if rollout_size <= 0 or update_epochs <= 0:
@@ -148,14 +151,20 @@ class AMPPORLModel(nn.Module):
         reward: float,
         next_state: ClusterState,
     ) -> None:
+        features = tuple(state.to_am_ppo_feature_vector())
+        next_features = tuple(next_state.to_am_ppo_feature_vector())
+        # A join or leave changes the action size. Drop the open rollout
+        # instead of stacking vectors of different lengths.
+        if self._rollout and len(features) != len(self._rollout[0].state):
+            self.discard_rollout()
         self._rollout.append(
             _Transition(
-                state=tuple(state.to_am_ppo_feature_vector()),
+                state=features,
                 action=action.raw_logits,
                 alive_mask=action.alive_mask,
                 log_probability=action.log_probability,
                 reward=float(reward),
-                next_state=tuple(next_state.to_am_ppo_feature_vector()),
+                next_state=next_features,
             )
         )
         if len(self._rollout) >= self._rollout_size:
@@ -167,7 +176,8 @@ class AMPPORLModel(nn.Module):
 
     def _distribution(self, states: torch.Tensor) -> Normal:
         means = self._actor_forward(states)
-        standard_deviations = self._log_std.clamp(-5.0, 1.0).exp().expand_as(means)
+        # Std at most ~0.22 so a decision stays near the mean instead of a random share.
+        standard_deviations = self._log_std.clamp(-5.0, -1.5).exp().expand_as(means)
         return Normal(means, standard_deviations)
 
     def _update_policy(self) -> None:
@@ -180,8 +190,7 @@ class AMPPORLModel(nn.Module):
         states = states_flat.view(len(rollout), -1, self._feature_per_server)
         next_states = next_states_flat.view(len(rollout), -1, self._feature_per_server)
         
-        # Pad actions and masks if they have different lengths (not typical in one rollout but just in case)
-        # Assuming fixed N per rollout as configured by backends
+        # Server count is fixed inside one rollout; a change discards it first.
         actions = torch.tensor([step.action for step in rollout], dtype=torch.float32)
         alive_masks = torch.tensor([step.alive_mask for step in rollout], dtype=torch.float32)
 

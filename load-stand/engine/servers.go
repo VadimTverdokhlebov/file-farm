@@ -126,6 +126,7 @@ func applyContainerPower(servers []ServerStatus, states map[string]bool) {
 		servers[i].Running = running
 		if !running {
 			servers[i].Status = "down"
+			servers[i].EDS = 0
 		}
 	}
 }

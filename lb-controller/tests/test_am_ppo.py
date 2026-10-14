@@ -10,7 +10,12 @@ from rl.metrics_source import StubMetricsSource
 from rl.prometheus_metrics_source import PrometheusMetricsSource, cpu_utilization_ratio
 from rl.types import ClusterState, ServerState
 from balancers.weighted_round_robin import WeightedRoundRobinBalancer
-from rl.weights import capacity_eds_weights, logits_to_eds_weights, masked_logits_to_eds_weights
+from rl.weights import (
+    capacity_eds_weights,
+    logits_to_eds_weights,
+    masked_logits_to_eds_weights,
+    step_toward_even_cpu,
+)
 
 
 BACKENDS = (
@@ -35,6 +40,7 @@ def make_state(
     errors: tuple[float, float] = (0.0, 0.0),
     request_rates: tuple[float, float] = (10.0, 10.0),
     latency_p99: float = 0.1,
+    cpu_limits: tuple[float, float] = (1.0, 1.0),
 ) -> ClusterState:
     servers = tuple(
         ServerState(
@@ -47,7 +53,7 @@ def make_state(
             request_rate_rps=request_rates[index],
             latency_p99_seconds=latency_p99,
             error_rate=errors[index],
-            cpu_limit_cores=1.0,
+            cpu_limit_cores=cpu_limits[index],
             memory_limit_bytes=1_073_741_824.0,
             is_healthy=healthy[index],
             current_weight_share=0.5,
@@ -192,6 +198,7 @@ class AMPPOTests(unittest.TestCase):
             error_weight=10.0,
             cpu_weight=2.0,
             balance_weight=0.0,
+            capacity_weight=0.0,
             churn_weight=0.5,
         )
 
@@ -284,20 +291,31 @@ class AMPPOTests(unittest.TestCase):
         )
         same_weights = {"server-1": 500, "server-2": 500}
 
-        even = balancer._compute_reward(
-            make_state(cpu=(0.6, 0.6), latency_p99=0.0),
+        uneven = make_state(cpu=(0.95, 0.35), latency_p99=0.0)
+        even = balancer._compute_reward(uneven, same_weights, same_weights)
+        onto_hot = balancer._compute_reward(
+            uneven,
             same_weights,
-            same_weights,
+            {"server-1": 800, "server-2": 200},
         )
-        split = balancer._compute_reward(
-            make_state(cpu=(0.95, 0.35), latency_p99=0.0),
+        onto_cold = balancer._compute_reward(
+            uneven,
             same_weights,
+            {"server-1": 200, "server-2": 800},
+        )
+        saturated = balancer._compute_reward(
+            make_state(cpu=(1.0, 1.0), latency_p99=0.0),
             same_weights,
+            {"server-1": 800, "server-2": 200},
         )
 
+        # Equal weights, or equal CPUs, are zero. Weight 4 times covariance 0.18.
         self.assertAlmostEqual(even, 0.0)
-        self.assertAlmostEqual(split, -2.4)
-        self.assertGreater(even, split)
+        self.assertAlmostEqual(saturated, 0.0)
+        self.assertAlmostEqual(onto_hot, -0.72)
+        self.assertAlmostEqual(onto_cold, 0.72)
+        self.assertGreater(onto_cold, even)
+        self.assertGreater(even, onto_hot)
 
     def test_idle_traffic_does_not_enter_the_rollout(self) -> None:
         idle = make_state(request_rates=(0.0, 0.0))
@@ -308,12 +326,172 @@ class AMPPOTests(unittest.TestCase):
             metrics_source=ScriptedMetricsSource([loaded, idle, idle, loaded]),
             model=model,
             min_training_rps=1.0,
+            action_hold_seconds=0.0,
         )
 
         for _ in range(4):
             balancer.select()
 
         self.assertEqual(model._rollout, [])
+
+    def test_weight_step_cannot_jump_onto_a_cooler_server(self) -> None:
+        # 40% CPU with weight 70 must not become 350 in one decision.
+        stepped = step_toward_even_cpu(
+            BACKENDS,
+            {"server-1": 70, "server-2": 930},
+            (0.40, 0.90),
+            (True, True),
+            (0.0, 0.0),
+            weight_total=1000,
+            max_step=20,
+        )
+
+        self.assertEqual(stepped["server-1"], 90)
+        self.assertEqual(stepped["server-2"], 910)
+        self.assertEqual(sum(stepped.values()), 1000)
+
+    def test_network_nudge_stays_inside_the_weight_step(self) -> None:
+        stepped = step_toward_even_cpu(
+            BACKENDS,
+            {"server-1": 70, "server-2": 930},
+            (0.40, 0.40),
+            (True, True),
+            (20.0, -20.0),
+            weight_total=1000,
+            max_step=20,
+        )
+
+        self.assertLessEqual(stepped["server-1"] - 70, 20)
+        self.assertGreaterEqual(stepped["server-2"], 910)
+        self.assertEqual(sum(stepped.values()), 1000)
+
+    def test_observation_ignores_cpu_capacity(self) -> None:
+        small = make_state(cpu_limits=(0.5, 0.5))
+        large = make_state(cpu_limits=(0.5, 2.0))
+
+        self.assertEqual(small.to_am_ppo_feature_vector(), large.to_am_ppo_feature_vector())
+        self.assertEqual(len(small.to_am_ppo_feature_vector()), 10)
+
+    def test_server_count_change_resets_the_open_rollout(self) -> None:
+        three_backends = BACKENDS + (Backend(name="server-3", host="server-3", port=50051),)
+        three_servers = make_state().servers + (
+            ServerState(
+                backend_name="server-3",
+                host="server-3",
+                cpu_utilization=0.4,
+                cpu_throttling_rate=0.0,
+                memory_utilization=0.3,
+                active_requests=2.0,
+                request_rate_rps=10.0,
+                latency_p99_seconds=0.1,
+                error_rate=0.0,
+                cpu_limit_cores=1.0,
+                memory_limit_bytes=1_073_741_824.0,
+                is_healthy=True,
+                current_weight_share=0.3,
+                disk_io_bytes_per_second=1_000_000.0,
+            ),
+        )
+        pair = make_state()
+        triple = ClusterState(
+            servers=three_servers,
+            cluster_request_rate_rps=30.0,
+            step_index=2,
+            timestamp_unix=1.0,
+            cluster_latency_p99_seconds=0.1,
+        )
+        model = make_model(rollout_size=8)
+
+        pair_action = model.act(pair, BACKENDS, weight_total=1000)
+        model.observe_transition(pair, pair_action, -1.0, pair)
+        triple_action = model.act(triple, three_backends, weight_total=1000)
+        model.observe_transition(triple, triple_action, -1.0, triple)
+
+        self.assertEqual(len(triple_action.weights), 3)
+        self.assertEqual(sum(triple_action.weights.values()), 1000)
+        self.assertEqual(len(model._rollout), 1)
+        self.assertEqual(len(model._rollout[0].action), 3)
+
+    def test_capacity_weights_score_better_than_equal_weights(self) -> None:
+        balancer = AMPPOBalancer(
+            BACKENDS,
+            metrics_source=StubMetricsSource(
+                BACKENDS,
+                cpu_limits=(0.5, 2.0),
+                memory_limits_bytes=(1_073_741_824.0, 1_073_741_824.0),
+            ),
+            model=make_model(),
+            weight_total=1000,
+            latency_weight=0.0,
+            error_weight=0.0,
+            cpu_weight=0.0,
+            balance_weight=0.0,
+            capacity_weight=8.0,
+            churn_weight=0.0,
+            action_hold_seconds=0.0,
+        )
+        state = make_state(cpu=(0.4, 0.4), cpu_limits=(0.5, 2.0), latency_p99=0.0)
+        equal = {"server-1": 500, "server-2": 500}
+        proportional = {"server-1": 200, "server-2": 800}
+
+        equal_reward = balancer._compute_reward(state, equal, equal)
+        proportional_reward = balancer._compute_reward(state, proportional, proportional)
+        # |0.5-0.2| + |0.5-0.8| = 0.6, divided by 2 is 0.3, times weight 8.
+        self.assertAlmostEqual(equal_reward, -2.4)
+        self.assertAlmostEqual(proportional_reward, 0.0)
+        self.assertGreater(proportional_reward, equal_reward)
+
+        dead = make_state(
+            healthy=(True, False),
+            cpu=(0.4, 0.0),
+            cpu_limits=(0.5, 2.0),
+            latency_p99=0.0,
+        )
+        parked = {"server-1": 1000, "server-2": 0}
+        self.assertAlmostEqual(balancer._compute_reward(dead, parked, parked), 0.0)
+
+    def test_action_hold_keeps_weights_until_the_window_elapses(self) -> None:
+        clock = {"now": 0.0}
+        first = make_state()
+        second = make_state(cpu=(0.2, 0.8))
+        source = ScriptedMetricsSource([first, second])
+        model = make_model(rollout_size=8)
+        balancer = AMPPOBalancer(
+            BACKENDS,
+            metrics_source=source,
+            model=model,
+            action_hold_seconds=20.0,
+            time_fn=lambda: clock["now"],
+        )
+
+        first_decision = balancer.select()
+        held = balancer.select()
+
+        self.assertEqual(held.weights, first_decision.weights)
+        self.assertEqual(len(source._states), 1)
+        self.assertEqual(model._rollout, [])
+
+        clock["now"] = 20.0
+        balancer.select()
+
+        self.assertEqual(len(source._states), 0)
+        self.assertEqual(len(model._rollout), 1)
+
+    def test_prometheus_rate_window_is_configurable(self) -> None:
+        source = PrometheusMetricsSource(
+            BACKENDS,
+            "http://prometheus",
+            cpu_limits=(1.0, 1.0),
+            memory_limits_bytes=(1_073_741_824.0, 1_073_741_824.0),
+            rate_window="20s",
+        )
+        client = RecordingPrometheusClient()
+        source._client = client
+
+        source.fetch(BACKENDS, {"server-1": 500, "server-2": 500})
+
+        self.assertTrue(any("[20s]" in query for query in client.queries))
+        self.assertFalse(any("[1m]" in query for query in client.queries))
 
     def test_two_core_server_at_two_cores_is_fully_busy_not_over_capacity(self) -> None:
         self.assertAlmostEqual(cpu_utilization_ratio(2.0, 2.0), 1.0)
