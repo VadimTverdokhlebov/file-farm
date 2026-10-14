@@ -32,6 +32,8 @@ interface WebSocketMessage {
   payload: StatusPayload | ErrorPayload;
 }
 
+const HISTORY_MS = 60 * 60 * 1000;
+
 const defaultServers = (): ServerStatus[] =>
   [1, 2, 3, 4].map((index) => ({
     name: `file-farm-server-${index}`,
@@ -113,7 +115,9 @@ export const useLoadTest = (): UseLoadTestReturn => {
           });
           setServerHistory((current) => {
             const next = current.concat({ at: Date.now(), servers });
-            return next.length > 180 ? next.slice(next.length - 180) : next;
+            const cutoff = next[next.length - 1].at - HISTORY_MS;
+            const start = next.findIndex((point) => point.at >= cutoff);
+            return start > 0 ? next.slice(start) : next;
           });
         } else if (message.type === 'error') {
           const payload = message.payload as ErrorPayload;

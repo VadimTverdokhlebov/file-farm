@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { ServerHistoryPoint, ServerStatus } from '../types/loadTest';
 
 const SERVER_COLORS = ['#1f6f5b', '#2563eb', '#d97706', '#be123c'];
@@ -14,44 +15,76 @@ const METRICS: { key: MetricKey; label: string; unit: string; fixedMax: number |
   { key: 'mem', label: 'Память', unit: 'МБ', fixedMax: null },
 ];
 
+const RANGES = [
+  { label: '3 мин', ms: 3 * 60 * 1000 },
+  { label: '10 мин', ms: 10 * 60 * 1000 },
+  { label: '30 мин', ms: 30 * 60 * 1000 },
+  { label: '1 час', ms: 60 * 60 * 1000 },
+];
+
 const VIEW_W = 640;
 const VIEW_H = 206;
 const PAD = { top: 10, right: 8, bottom: 28, left: 42 };
 const TIME_TICKS = 4;
 
 export function ServerCharts({ history }: { history: ServerHistoryPoint[] }) {
+  const [rangeMs, setRangeMs] = useState(RANGES[0].ms);
   const names = serverNames(history);
-
-  if (history.length === 0 || names.length === 0) {
-    return <p className="load-empty">Графики появятся, когда придёт статус серверов.</p>;
-  }
+  const windowEnd = history.length > 0 ? history[history.length - 1].at : Date.now();
+  const windowStart = windowEnd - rangeMs;
+  const visible = history.filter((point) => point.at >= windowStart);
 
   return (
-    <div className="load-charts">
-      {METRICS.map((metric) => (
-        <article className="load-chart" key={metric.key}>
-          <h3>{metric.label}{metric.unit ? `, ${metric.unit}` : ''}</h3>
-          {metric.key === 'totalRps' ? (
-            <div className="load-legend">
-              <span>
-                <i style={{ background: TOTAL_COLOR }} />
-                кластер {formatNumber(totalRps(history[history.length - 1]))}
-              </span>
-            </div>
-          ) : (
-            <div className="load-legend">
-              {names.map((name, index) => (
-                <span key={name}>
-                  <i style={{ background: SERVER_COLORS[index % SERVER_COLORS.length] }} />
-                  {shortName(name)} {formatLatest(history, name, metric.key)}
-                </span>
-              ))}
-            </div>
-          )}
-          <MetricChart history={history} names={names} metric={metric.key} fixedMax={metric.fixedMax} />
-        </article>
-      ))}
-    </div>
+    <>
+      <div className="load-chart-range" role="group" aria-label="Интервал графиков">
+        {RANGES.map((range) => (
+          <button
+            key={range.ms}
+            type="button"
+            aria-pressed={range.ms === rangeMs}
+            onClick={() => setRangeMs(range.ms)}
+          >
+            {range.label}
+          </button>
+        ))}
+      </div>
+      {history.length === 0 || names.length === 0 ? (
+        <p className="load-empty">Графики появятся, когда придёт статус серверов.</p>
+      ) : (
+        <div className="load-charts">
+          {METRICS.map((metric) => (
+            <article className="load-chart" key={metric.key}>
+              <h3>{metric.label}{metric.unit ? `, ${metric.unit}` : ''}</h3>
+              {metric.key === 'totalRps' ? (
+                <div className="load-legend">
+                  <span>
+                    <i style={{ background: TOTAL_COLOR }} />
+                    кластер {formatNumber(totalRps(history[history.length - 1]))}
+                  </span>
+                </div>
+              ) : (
+                <div className="load-legend">
+                  {names.map((name, index) => (
+                    <span key={name}>
+                      <i style={{ background: SERVER_COLORS[index % SERVER_COLORS.length] }} />
+                      {shortName(name)} {formatLatest(history, name, metric.key)}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <MetricChart
+                history={visible}
+                names={names}
+                metric={metric.key}
+                fixedMax={metric.fixedMax}
+                windowStart={windowStart}
+                windowMs={rangeMs}
+              />
+            </article>
+          ))}
+        </div>
+      )}
+    </>
   );
 }
 
@@ -60,11 +93,15 @@ function MetricChart({
   names,
   metric,
   fixedMax,
+  windowStart,
+  windowMs,
 }: {
   history: ServerHistoryPoint[];
   names: string[];
   metric: MetricKey;
   fixedMax: number | null;
+  windowStart: number;
+  windowMs: number;
 }) {
   const series = metric === 'totalRps'
     ? [history.map((point) => totalRps(point))]
@@ -78,6 +115,7 @@ function MetricChart({
   const plotH = VIEW_H - PAD.top - PAD.bottom;
   const ticks = [max, max / 2, 0];
   const colors = metric === 'totalRps' ? [TOTAL_COLOR] : SERVER_COLORS;
+  const times = history.map((point) => point.at);
 
   return (
     <svg viewBox={`0 0 ${VIEW_W} ${VIEW_H}`} role="img" aria-label={metric}>
@@ -92,13 +130,13 @@ function MetricChart({
           </g>
         );
       })}
-      {timeTicks(history, plotW).map((tick, slot) => (
+      {timeTicks(windowStart, windowMs, plotW).map((tick, slot) => (
         <text key={slot} x={tick.x} y={VIEW_H - 6} className="load-chart-tick" textAnchor={tick.anchor}>
           {tick.label}
         </text>
       ))}
       {series.map((values, index) => (
-        segments(values, history.length, plotW, max, plotH).map((points, segment) => (
+        segments(values, times, windowStart, windowMs, plotW, max, plotH).map((points, segment) => (
           <polyline
             key={`${index}-${segment}`}
             points={points}
@@ -116,7 +154,9 @@ function MetricChart({
 
 function segments(
   values: Array<number | null>,
-  length: number,
+  times: number[],
+  windowStart: number,
+  windowMs: number,
   plotW: number,
   max: number,
   plotH: number,
@@ -135,7 +175,7 @@ function segments(
       flush();
       return;
     }
-    const x = length === 1 ? PAD.left : PAD.left + (pointIndex / (length - 1)) * plotW;
+    const x = xOf(times[pointIndex] ?? windowStart, windowStart, windowMs, plotW);
     current.push(`${x},${yOf(value, max, plotH)}`);
   });
   flush();
@@ -143,20 +183,27 @@ function segments(
 }
 
 function timeTicks(
-  history: ServerHistoryPoint[],
+  windowStart: number,
+  windowMs: number,
   plotW: number,
 ): { x: number; label: string; anchor: 'start' | 'middle' | 'end' }[] {
-  if (history.length === 0) {
-    return [];
-  }
-  const last = history.length - 1;
-  const slots = Math.min(TIME_TICKS, history.length);
-  return Array.from({ length: slots }, (_, slot) => {
-    const index = slots === 1 ? 0 : Math.round((slot * last) / (slots - 1));
-    const x = history.length === 1 ? PAD.left : PAD.left + (index / last) * plotW;
-    const anchor = slot === 0 ? 'start' : slot === slots - 1 ? 'end' : 'middle';
-    return { x, label: formatClock(history[index].at), anchor };
+  return Array.from({ length: TIME_TICKS }, (_, slot) => {
+    const ratio = slot / (TIME_TICKS - 1);
+    const anchor = slot === 0 ? 'start' : slot === TIME_TICKS - 1 ? 'end' : 'middle';
+    return {
+      x: PAD.left + ratio * plotW,
+      label: formatClock(windowStart + ratio * windowMs),
+      anchor,
+    };
   });
+}
+
+function xOf(at: number, windowStart: number, windowMs: number, plotW: number): number {
+  if (windowMs <= 0) {
+    return PAD.left;
+  }
+  const ratio = Math.min(Math.max((at - windowStart) / windowMs, 0), 1);
+  return PAD.left + ratio * plotW;
 }
 
 function serverNames(history: ServerHistoryPoint[]): string[] {
@@ -175,8 +222,12 @@ function metricValue(point: ServerHistoryPoint, name: string, metric: MetricKey)
 
 function weightValue(history: ServerHistoryPoint[], index: number, name: string): number | null {
   const server = history[index]?.servers.find((item) => item.name === name);
-  if (!server || isStopped(server)) {
+  if (!server) {
     return null;
+  }
+  // A stopped server keeps a line on the zero axis instead of disappearing.
+  if (isStopped(server)) {
+    return 0;
   }
   const value = Number(server.eds);
   const finite = Number.isFinite(value) ? value : 0;
@@ -196,7 +247,7 @@ function weightValue(history: ServerHistoryPoint[], index: number, name: string)
       return previousWeight;
     }
   }
-  return null;
+  return 0;
 }
 
 function isStopped(server: ServerStatus): boolean {
@@ -243,14 +294,10 @@ function formatTick(value: number): string {
 }
 
 function formatLatest(history: ServerHistoryPoint[], name: string, metric: MetricKey): string {
-  const latest = history[history.length - 1];
-  const server = latest?.servers.find((item) => item.name === name);
-  if (metric === 'eds' && server && isStopped(server)) {
-    return 'выкл';
-  }
   if (metric === 'eds') {
     return formatNumber(weightValue(history, history.length - 1, name) ?? 0);
   }
+  const latest = history[history.length - 1];
   const value = latest ? metricValue(latest, name, metric) : 0;
   return formatNumber(value ?? 0);
 }

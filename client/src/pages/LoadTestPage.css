@@ -262,6 +262,30 @@ fieldset.load-field legend {
   margin: 8px 0 0;
 }
 
+.load-chart-range {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.load-chart-range button {
+  border: 1px solid #d9e0e7;
+  border-radius: 999px;
+  background: #fff;
+  color: #172033;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.load-chart-range button[aria-pressed='true'] {
+  border-color: #1f6f5b;
+  background: #1f6f5b;
+  color: #fff;
+}
+
 .load-charts {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
