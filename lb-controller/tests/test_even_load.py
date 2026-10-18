@@ -108,9 +108,12 @@ class EvenLoadTests(unittest.TestCase):
             timestamp_unix=0.0,
         )
 
-        self.assertEqual(observed_server_signals(server), tuple(state.to_am_ppo_feature_vector()))
-        self.assertEqual(observed_server_signals(server)[0], 0.4)
-        self.assertEqual(observed_server_signals(server)[4], 1.0)
+        features = state.to_am_ppo_feature_vector()
+        self.assertEqual(tuple(features[:5]), observed_server_signals(server))
+        self.assertEqual(features[0], 0.4)
+        self.assertEqual(features[4], 1.0)
+        self.assertEqual(features[5], 1.0)
+        self.assertEqual(features[6], 1.0)
 
     def test_hold_keeps_the_previous_weights(self) -> None:
         clock = {"now": 0.0}

@@ -78,15 +78,20 @@ class ClusterState:
         return features
 
     def to_am_ppo_feature_vector(self) -> list[float]:
-        """Per-server observed state. Length is 5 * N, so N may change.
+        """Per-server observed state. Length is 7 * N, so N may change.
 
-        CPU limit is not included. Utilization is already a fraction of whatever
-        limit the server has, and the policy has to react to that fraction.
+        Utilization stays a fraction of the server's own limit. The CPU and
+        memory limits themselves are added as shares of the current cluster,
+        so a 2-core server is distinguishable from a 0.5-core one.
         """
+        cpu_shares = _limit_shares([server.cpu_limit_cores for server in self.servers])
+        memory_shares = _limit_shares([server.memory_limit_bytes for server in self.servers])
         features: list[float] = []
 
-        for server in self.servers:
+        for index, server in enumerate(self.servers):
             features.extend(observed_server_signals(server))
+            features.append(cpu_shares[index])
+            features.append(memory_shares[index])
 
         return features
 
@@ -100,6 +105,18 @@ def observed_server_signals(server: ServerState) -> tuple[float, float, float, f
         _log_scale(server.active_requests, 100.0),
         1.0 if server.is_healthy else 0.0,
     )
+
+
+def _limit_shares(limits: list[float]) -> list[float]:
+    """Share of each positive limit in the current cluster. Sums to 1."""
+    cleaned = [
+        float(limit) if math.isfinite(limit) and limit > 0.0 else 0.0
+        for limit in limits
+    ]
+    total = sum(cleaned)
+    if total <= 0.0:
+        return [0.0] * len(cleaned)
+    return [limit / total for limit in cleaned]
 
 
 def _clamp(value: float) -> float:

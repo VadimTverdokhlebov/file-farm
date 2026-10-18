@@ -57,10 +57,12 @@ def create_balancer(algorithm: str, backends) -> Balancer:
         return RandomChoiceBalancer(backends, weight_total=DQN_WEIGHT_TOTAL)
 
     if algorithm == "am_ppo":
+        cpu_limits, _memory_limits = parse_capacity_lists(backends)
         return AMPPOBalancer(
             backends,
             metrics_source=create_metrics_source(backends, rate_window=AM_PPO_METRICS_WINDOW),
             weight_total=DQN_WEIGHT_TOTAL,
+            cpu_limits=cpu_limits,
         )
 
     raise ValueError(f"Unsupported LB algorithm: {algorithm}")

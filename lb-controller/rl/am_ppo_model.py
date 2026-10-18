@@ -13,8 +13,8 @@ from rl.weights import masked_logits_to_eds_weights
 
 logger = logging.getLogger("lb-controller.am_ppo")
 
-# cpu, disk, rps, active requests, health. No capacity hint.
-_FEATURES_PER_SERVER = 5
+# cpu, disk, rps, active requests, health, cpu-limit share, memory-limit share.
+_FEATURES_PER_SERVER = 7
 
 
 @dataclass(frozen=True)

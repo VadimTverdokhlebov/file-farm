@@ -116,6 +116,56 @@ class AMPPOTests(unittest.TestCase):
         self.assertEqual(decision.weights, expected)
         self.assertEqual(sum(decision.weights.values()), 1000)
 
+    def test_first_am_ppo_weights_follow_cpu_capacity(self) -> None:
+        backends = (
+            Backend(name="server-1", host="file-farm-server-1", port=50051),
+            Backend(name="server-2", host="file-farm-server-2", port=50051),
+            Backend(name="server-3", host="file-farm-server-3", port=50051),
+            Backend(name="server-4", host="file-farm-server-4", port=50051),
+        )
+        servers = tuple(
+            ServerState(
+                backend_name=backend.name,
+                host=backend.host,
+                cpu_utilization=0.9 if index == 0 else 0.2,
+                cpu_throttling_rate=0.0,
+                memory_utilization=0.3,
+                active_requests=2.0,
+                request_rate_rps=10.0,
+                latency_p99_seconds=0.1,
+                error_rate=0.0,
+                cpu_limit_cores=(0.5, 1.0, 0.5, 2.0)[index],
+                memory_limit_bytes=1_073_741_824.0,
+                is_healthy=index != 2,
+                current_weight_share=0.25,
+            )
+            for index, backend in enumerate(backends)
+        )
+        state = ClusterState(
+            servers=servers,
+            cluster_request_rate_rps=40.0,
+            step_index=1,
+            timestamp_unix=0.0,
+        )
+        balancer = AMPPOBalancer(
+            backends,
+            metrics_source=ScriptedMetricsSource([state]),
+            model=make_model(rollout_size=8),
+            weight_total=1000,
+            cpu_limits=(0.5, 1.0, 0.5, 2.0),
+            action_hold_seconds=0.0,
+        )
+
+        self.assertEqual(
+            balancer.select().weights,
+            {
+                "file-farm-server-1": 125,
+                "file-farm-server-2": 250,
+                "file-farm-server-3": 0,
+                "file-farm-server-4": 500,
+            },
+        )
+
     def test_masked_weights_exclude_unhealthy_backend(self) -> None:
         weights = masked_logits_to_eds_weights(
             BACKENDS,
@@ -365,12 +415,21 @@ class AMPPOTests(unittest.TestCase):
         self.assertGreaterEqual(stepped["server-2"], 910)
         self.assertEqual(sum(stepped.values()), 1000)
 
-    def test_observation_ignores_cpu_capacity(self) -> None:
+    def test_observation_includes_limit_shares(self) -> None:
         small = make_state(cpu_limits=(0.5, 0.5))
         large = make_state(cpu_limits=(0.5, 2.0))
 
-        self.assertEqual(small.to_am_ppo_feature_vector(), large.to_am_ppo_feature_vector())
-        self.assertEqual(len(small.to_am_ppo_feature_vector()), 10)
+        small_features = small.to_am_ppo_feature_vector()
+        large_features = large.to_am_ppo_feature_vector()
+
+        self.assertEqual(len(small_features), 14)
+        self.assertEqual(small_features[:5], large_features[:5])
+        self.assertEqual(small_features[5:7], [0.5, 0.5])
+        self.assertEqual(small_features[12:14], [0.5, 0.5])
+        self.assertAlmostEqual(large_features[5], 0.2)
+        self.assertAlmostEqual(large_features[12], 0.8)
+        self.assertEqual(large_features[6], small_features[6])
+        self.assertEqual(large_features[13], small_features[13])
 
     def test_server_count_change_resets_the_open_rollout(self) -> None:
         three_backends = BACKENDS + (Backend(name="server-3", host="server-3", port=50051),)

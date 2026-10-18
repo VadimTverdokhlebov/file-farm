@@ -31,7 +31,7 @@ from balancers.base import Balancer, LoadDecision
 from rl.am_ppo_model import AMPPORLModel, PpoAction
 from rl.metrics_source import MetricsSource
 from rl.types import ClusterState
-from rl.weights import equal_eds_weights, step_toward_even_cpu
+from rl.weights import capacity_eds_weights, equal_eds_weights, step_toward_even_cpu
 
 logger = logging.getLogger("lb-controller.am_ppo")
 
@@ -44,6 +44,7 @@ class AMPPOBalancer(Balancer):
         metrics_source: MetricsSource,
         model: AMPPORLModel | None = None,
         weight_total: int = 1000,
+        cpu_limits: tuple[float, ...] | None = None,
         latency_sla_seconds: float = AM_PPO_LATENCY_SLA_SECONDS,
         cpu_saturation: float = AM_PPO_CPU_SATURATION,
         cpu_hard_limit: float = AM_PPO_CPU_HARD_LIMIT,
@@ -91,7 +92,14 @@ class AMPPOBalancer(Balancer):
         self._action_hold_seconds = action_hold_seconds
         self._time_fn = time_fn or time.monotonic
         self._hold_until = 0.0
-        self._current_weights = equal_eds_weights(backends, weight_total=weight_total)
+        if cpu_limits is None:
+            self._current_weights = equal_eds_weights(backends, weight_total=weight_total)
+        else:
+            self._current_weights = capacity_eds_weights(
+                backends,
+                cpu_limits,
+                weight_total=weight_total,
+            )
         self._metrics_source = metrics_source
         self._model = model or AMPPORLModel(
             learning_rate=AM_PPO_LEARNING_RATE,
@@ -145,16 +153,23 @@ class AMPPOBalancer(Balancer):
                 )
 
         action = self._model.act(state, self._backends, weight_total=self._weight_total)
-        # One small step from the weights already in effect. A 40% CPU reading
-        # must not replace weight 70 with 350.
-        stepped = step_toward_even_cpu(
-            self._backends,
-            self._current_weights,
-            tuple(server.cpu_utilization for server in state.servers),
-            action.alive_mask,
-            action.raw_logits,
-            weight_total=self._weight_total,
-        )
+        if self._previous_transition is None:
+            # The first assignment is the hardware split. Later decisions move
+            # one capped step away from whatever is already in effect.
+            stepped = {
+                backend.host: self._current_weights.get(backend.host, 0) if alive else 0
+                for backend, alive in zip(self._backends, action.alive_mask)
+            }
+        else:
+            # A 40% CPU reading must not replace weight 70 with 350.
+            stepped = step_toward_even_cpu(
+                self._backends,
+                self._current_weights,
+                tuple(server.cpu_utilization for server in state.servers),
+                action.alive_mask,
+                action.raw_logits,
+                weight_total=self._weight_total,
+            )
         action = replace(action, weights=stepped)
         weights_before_action = dict(self._current_weights)
         self._current_weights = dict(action.weights)
