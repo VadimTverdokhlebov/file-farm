@@ -19,7 +19,9 @@ class BalancerRuntimeTests(unittest.TestCase):
             with urllib.request.urlopen(f"{base_url}/api/algorithms", timeout=2) as response:
                 initial = json.loads(response.read())
             self.assertEqual(initial["selected"], "round_robin")
-            self.assertIn("am_ppo", {algorithm["id"] for algorithm in initial["algorithms"]})
+            ids = {algorithm["id"] for algorithm in initial["algorithms"]}
+            self.assertIn("am_ppo", ids)
+            self.assertIn("even_load", ids)
 
             request = urllib.request.Request(
                 f"{base_url}/api/algorithm",

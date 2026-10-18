@@ -11,6 +11,7 @@ ALGORITHMS = (
     {"id": "least_request", "name": "Least Request"},
     {"id": "random_choice", "name": "Random Choice"},
     {"id": "am_ppo", "name": "AM-PPO"},
+    {"id": "even_load", "name": "Even Load"},
 )
 
 

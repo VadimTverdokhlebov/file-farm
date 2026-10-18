@@ -1,6 +1,7 @@
 from balancers.base import Balancer, LoadDecision
 from balancers.am_ppo_balancer import AMPPOBalancer
 from balancers.ema_balancer import EmaBalancer
+from balancers.even_load_balancer import EVEN_LOAD_METRICS_WINDOW, EvenLoadBalancer
 from balancers.factory import create_metrics_source, parse_capacity_lists
 from balancers.least_request_balancer import LeastRequestBalancer
 from balancers.round_robin import RoundRobinBalancer
@@ -12,6 +13,7 @@ __all__ = [
     "Balancer",
     "AMPPOBalancer",
     "EmaBalancer",
+    "EvenLoadBalancer",
     "LeastRequestBalancer",
     "RandomChoiceBalancer",
     "LoadDecision",
@@ -28,6 +30,13 @@ def create_balancer(algorithm: str, backends) -> Balancer:
     if algorithm == "weighted_round_robin":
         cpu_limits, _memory_limits = parse_capacity_lists(backends)
         return WeightedRoundRobinBalancer(backends, cpu_limits, weight_total=DQN_WEIGHT_TOTAL)
+
+    if algorithm == "even_load":
+        return EvenLoadBalancer(
+            backends,
+            create_metrics_source(backends, rate_window=EVEN_LOAD_METRICS_WINDOW),
+            weight_total=DQN_WEIGHT_TOTAL,
+        )
 
     if algorithm == "ema":
         return EmaBalancer(

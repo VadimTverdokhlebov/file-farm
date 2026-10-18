@@ -86,17 +86,20 @@ class ClusterState:
         features: list[float] = []
 
         for server in self.servers:
-            features.extend(
-                [
-                    _clamp(server.cpu_utilization),
-                    _log_scale(server.disk_io_bytes_per_second, 50_000_000.0),
-                    _log_scale(server.request_rate_rps, 100.0),
-                    _log_scale(server.active_requests, 100.0),
-                    1.0 if server.is_healthy else 0.0,
-                ]
-            )
+            features.extend(observed_server_signals(server))
 
         return features
+
+
+def observed_server_signals(server: ServerState) -> tuple[float, float, float, float, float]:
+    """CPU, disk, RPS, active requests, and health, on the same scale as AM-PPO."""
+    return (
+        _clamp(server.cpu_utilization),
+        _log_scale(server.disk_io_bytes_per_second, 50_000_000.0),
+        _log_scale(server.request_rate_rps, 100.0),
+        _log_scale(server.active_requests, 100.0),
+        1.0 if server.is_healthy else 0.0,
+    )
 
 
 def _clamp(value: float) -> float:
