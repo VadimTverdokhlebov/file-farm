@@ -17,6 +17,21 @@ class PrometheusClientTests(unittest.TestCase):
             ):
                 self.assertEqual(self.client.query_scalar("test_metric", default=0.05), 0.05)
 
+    def test_empty_result_is_missing_and_a_real_zero_stays_zero(self) -> None:
+        with patch.object(
+            self.client,
+            "_instant_query",
+            return_value={"status": "success", "data": {"result": []}},
+        ):
+            self.assertIsNone(self.client.query_optional("irate(cpu[5s])"))
+            self.assertEqual(self.client.query_scalar("irate(cpu[5s])", default=0.0), 0.0)
+        with patch.object(
+            self.client,
+            "_instant_query",
+            return_value={"status": "success", "data": {"result": [{"value": [0, "0"]}]}},
+        ):
+            self.assertEqual(self.client.query_optional("irate(cpu[5s])"), 0.0)
+
     def test_finite_value_is_returned(self) -> None:
         with patch.object(
             self.client,

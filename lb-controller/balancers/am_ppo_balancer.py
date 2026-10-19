@@ -16,6 +16,8 @@ from config import (
     AM_PPO_LEARNING_RATE,
     AM_PPO_MIN_TRAINING_RPS,
     AM_PPO_REWARD_BALANCE_WEIGHT,
+    AM_PPO_REWARD_SPREAD_WEIGHT,
+    AM_PPO_REWARD_DISK_WEIGHT,
     AM_PPO_REWARD_CAPACITY_WEIGHT,
     AM_PPO_REWARD_CHURN_WEIGHT,
     AM_PPO_REWARD_CPU_WEIGHT,
@@ -30,7 +32,7 @@ from config import (
 from balancers.base import Balancer, LoadDecision
 from rl.am_ppo_model import AMPPORLModel, PpoAction
 from rl.metrics_source import MetricsSource
-from rl.types import ClusterState
+from rl.types import ClusterState, disk_busyness
 from rl.weights import capacity_eds_weights, equal_eds_weights, step_toward_even_cpu
 
 logger = logging.getLogger("lb-controller.am_ppo")
@@ -53,6 +55,8 @@ class AMPPOBalancer(Balancer):
         error_weight: float = AM_PPO_REWARD_ERROR_WEIGHT,
         cpu_weight: float = AM_PPO_REWARD_CPU_WEIGHT,
         balance_weight: float = AM_PPO_REWARD_BALANCE_WEIGHT,
+        spread_weight: float = AM_PPO_REWARD_SPREAD_WEIGHT,
+        disk_weight: float = AM_PPO_REWARD_DISK_WEIGHT,
         capacity_weight: float = AM_PPO_REWARD_CAPACITY_WEIGHT,
         churn_weight: float = AM_PPO_REWARD_CHURN_WEIGHT,
         action_hold_seconds: float = AM_PPO_ACTION_HOLD_SEC,
@@ -72,6 +76,10 @@ class AMPPOBalancer(Balancer):
             raise ValueError("min_training_rps must be non-negative")
         if balance_weight < 0.0:
             raise ValueError("balance_weight must be non-negative")
+        if spread_weight < 0.0:
+            raise ValueError("spread_weight must be non-negative")
+        if disk_weight < 0.0:
+            raise ValueError("disk_weight must be non-negative")
         if capacity_weight < 0.0:
             raise ValueError("capacity_weight must be non-negative")
         if action_hold_seconds < 0.0:
@@ -87,6 +95,8 @@ class AMPPOBalancer(Balancer):
         self._error_weight = error_weight
         self._cpu_weight = cpu_weight
         self._balance_weight = balance_weight
+        self._spread_weight = spread_weight
+        self._disk_weight = disk_weight
         self._capacity_weight = capacity_weight
         self._churn_weight = churn_weight
         self._action_hold_seconds = action_hold_seconds
@@ -120,6 +130,25 @@ class AMPPOBalancer(Balancer):
             return LoadDecision(weights=self._current_weights)
 
         state = self._metrics_source.fetch(self._backends, self._current_weights)
+        if _cpu_sample_missing(state):
+            # A missed scrape must not look like an idle server. Drop the open
+            # transition and keep the current weights until the next full sample.
+            logger.warning(
+                "AM-PPO skipped step=%d; a CPU sample is missing",
+                state.step_index,
+            )
+            self._previous_transition = None
+            # The next sample would continue from a different state, so the
+            # open rollout would stitch two unrelated trajectories.
+            self._model.discard_rollout()
+            held = {
+                backend.host: self._current_weights.get(backend.host, 0) if server.is_healthy else 0
+                for backend, server in zip(self._backends, state.servers)
+            }
+            self._current_weights = held
+            self._hold_until = now + self._action_hold_seconds
+            return LoadDecision(weights=held)
+
         if self._previous_transition is not None:
             previous_state, previous_action, weights_before_action = self._previous_transition
             if self._is_trainable(previous_state) and self._is_trainable(state):
@@ -129,17 +158,21 @@ class AMPPOBalancer(Balancer):
                     weights_before_action,
                     previous_action.weights,
                 )
-                reward = sum(terms.values())
+                # Latency and errors are one number for the whole cluster. They
+                # push every logit the same way and that shift cannot change weights.
+                reward = sum(terms[name] for name in _TRAINED_REWARD_TERMS)
                 self._model.observe_transition(previous_state, previous_action, reward, state)
                 cpu_percent = [round(server.cpu_utilization * 100) for server in previous_state.servers]
                 logger.info(
-                    "AM-PPO observed transition step=%d reward=%.4f latency=%.2f errors=%.2f cpu=%.2f balance=%.2f capacity=%.2f churn=%.2f cpu%%=%s",
+                    "AM-PPO observed transition step=%d reward=%.4f latency=%.2f errors=%.2f cpu=%.2f balance=%.2f spread=%.2f disk=%.2f capacity=%.2f churn=%.2f cpu%%=%s",
                     state.step_index,
                     reward,
                     terms["latency"],
                     terms["errors"],
                     terms["cpu"],
                     terms["balance"],
+                    terms["spread"],
+                    terms["disk"],
                     terms["capacity"],
                     terms["churn"],
                     cpu_percent,
@@ -183,6 +216,13 @@ class AMPPOBalancer(Balancer):
             action.weights,
         )
         return LoadDecision(weights=action.weights)
+
+    def set_learning_enabled(self, enabled: bool) -> None:
+        self._model.set_learning_enabled(enabled)
+
+    @property
+    def learning_enabled(self) -> bool:
+        return self._model.learning_enabled
 
     def _compute_reward(
         self,
@@ -228,7 +268,17 @@ class AMPPOBalancer(Balancer):
         # Scored on the CPUs the action actually saw. Extra weight on a hotter
         # server is a penalty; extra weight on a colder one is a reward.
         # Equal CPUs, or equal weights, score zero.
-        balance_penalty = _weight_on_hotter_servers(decision_state, action_weights)
+        balance_penalty = _weight_on_hotter_servers(decision_state, action_weights, previous_weights)
+        # The cluster after the action. Equal CPUs score zero even when the
+        # weights are equal, which the balance term cannot see.
+        spread_penalty = _cpu_spread(outcome_state)
+        # Same shape as the CPU term: extra weight on a busier disk is a penalty.
+        disk_penalty = _weight_covariance(
+            [disk_busyness(server) for server in decision_state.servers],
+            [server.is_healthy for server in decision_state.servers],
+            [action_weights.get(server.host, 0) for server in decision_state.servers],
+            [previous_weights.get(server.host, 0) for server in decision_state.servers],
+        )
         # Off unless AM_PPO_REWARD_CAPACITY_WEIGHT is set. The policy does not
         # observe CPU limits; this term would teach a fixed capacity target.
         capacity_penalty = _capacity_share_gap(decision_state, action_weights)
@@ -241,12 +291,26 @@ class AMPPOBalancer(Balancer):
             "errors": -self._error_weight * error_rate,
             "cpu": -self._cpu_weight * cpu_penalty,
             "balance": -self._balance_weight * balance_penalty,
+            "spread": -self._spread_weight * spread_penalty,
+            "disk": -self._disk_weight * disk_penalty,
             "capacity": -self._capacity_weight * capacity_penalty,
             "churn": -self._churn_weight * churn,
         }
 
     def _is_trainable(self, state: ClusterState) -> bool:
         return state.cluster_request_rate_rps >= self._min_training_rps
+
+
+# Terms that can differ between servers. Latency and errors stay in the log only.
+_TRAINED_REWARD_TERMS = ("balance", "spread", "disk", "churn", "cpu", "capacity")
+
+
+def _cpu_sample_missing(state: ClusterState) -> bool:
+    """True when a live server has no CPU reading. A real 0% is finite."""
+    return any(
+        server.is_healthy and not math.isfinite(server.cpu_utilization)
+        for server in state.servers
+    )
 
 
 def _cpu_saturation_penalty(cpu: float, soft_limit: float, hard_limit: float) -> float:
@@ -289,26 +353,77 @@ def _capacity_share_gap(state: ClusterState, weights: dict[str, int]) -> float:
     return gap / 2.0
 
 
-def _weight_on_hotter_servers(state: ClusterState, weights: dict[str, int]) -> float:
-    """Covariance of weight share and CPU among healthy servers.
+def _cpu_spread(state: ClusterState) -> float:
+    """Mean absolute deviation of CPU among healthy servers.
 
-    Zero when the weights are equal or the CPUs are equal. Positive when the
-    action put extra weight on a hotter server, negative when it favored a colder one.
+    Zero when every live server sits at the same utilization. A stopped server
+    is left out, so its zero reading does not look like a cold server.
     """
-    rows: list[tuple[float, int]] = []
-    for server in state.servers:
-        if not server.is_healthy or not math.isfinite(server.cpu_utilization):
+    cpus = [
+        min(max(server.cpu_utilization, 0.0), 1.0)
+        for server in state.servers
+        if server.is_healthy and math.isfinite(server.cpu_utilization)
+    ]
+    if len(cpus) < 2:
+        return 0.0
+    mean_cpu = sum(cpus) / len(cpus)
+    return sum(abs(cpu - mean_cpu) for cpu in cpus) / len(cpus)
+
+
+def _weight_on_hotter_servers(
+    state: ClusterState,
+    weights: dict[str, int],
+    previous_weights: dict[str, int] | None = None,
+) -> float:
+    """Covariance of the weight shift and CPU among healthy servers.
+
+    Positive when the action moved weight onto a hotter server, negative when
+    it moved weight onto a colder one. Zero when nothing moved or CPUs are equal.
+    """
+    return _weight_covariance(
+        [
+            min(max(server.cpu_utilization, 0.0), 1.0) if math.isfinite(server.cpu_utilization) else None
+            for server in state.servers
+        ],
+        [server.is_healthy for server in state.servers],
+        [weights.get(server.host, 0) for server in state.servers],
+        None
+        if previous_weights is None
+        else [previous_weights.get(server.host, 0) for server in state.servers],
+    )
+
+
+def _weight_covariance(
+    signals: list[float | None],
+    healthy: list[bool],
+    weights: list[int],
+    previous_weights: list[int] | None = None,
+) -> float:
+    """Positive when weight moves toward the higher signal. Zero if either side is flat.
+
+    The action only moves a few points per decision, so the absolute share is
+    mostly set by earlier decisions. With previous_weights the score covers the
+    shift this action made, so the reward depends on the action and not on history.
+    Without previous_weights the share is compared with an equal split.
+    """
+    rows: list[tuple[float, int, int]] = []
+    for index, (signal, is_healthy, weight) in enumerate(zip(signals, healthy, weights)):
+        if not is_healthy or signal is None or not math.isfinite(signal):
             continue
-        cpu = min(max(server.cpu_utilization, 0.0), 1.0)
-        rows.append((cpu, max(weights.get(server.host, 0), 0)))
+        before = 0 if previous_weights is None else max(previous_weights[index], 0)
+        rows.append((min(max(signal, 0.0), 1.0), max(weight, 0), before))
     if len(rows) < 2:
         return 0.0
-    weight_sum = sum(weight for _, weight in rows)
+    weight_sum = sum(weight for _, weight, _ in rows)
     if weight_sum <= 0:
         return 0.0
-    mean_cpu = sum(cpu for cpu, _ in rows) / len(rows)
+    before_sum = sum(before for _, _, before in rows)
+    if previous_weights is not None and before_sum <= 0:
+        return 0.0
+    mean_signal = sum(signal for signal, _, _ in rows) / len(rows)
     equal_share = 1.0 / len(rows)
     penalty = 0.0
-    for cpu, weight in rows:
-        penalty += (weight / weight_sum - equal_share) * (cpu - mean_cpu)
+    for signal, weight, before in rows:
+        reference = equal_share if previous_weights is None else before / before_sum
+        penalty += (weight / weight_sum - reference) * (signal - mean_signal)
     return penalty

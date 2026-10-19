@@ -17,7 +17,7 @@ type BalancerAlgorithm struct {
 
 type BalancerConfiguration struct {
 	Algorithms []BalancerAlgorithm `json:"algorithms"`
-	Selected   string               `json:"selected"`
+	Selected   string              `json:"selected"`
 }
 
 func (e *Engine) GetBalancerConfiguration(ctx context.Context) (BalancerConfiguration, error) {
@@ -58,6 +58,35 @@ func (e *Engine) SetBalancerAlgorithm(ctx context.Context, algorithm string) err
 	response, err := (&http.Client{}).Do(request)
 	if err != nil {
 		return fmt.Errorf("selecting load-balancer algorithm: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusOK {
+		return nil
+	}
+	message, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+	return fmt.Errorf("load balancer returned %s: %s", response.Status, strings.TrimSpace(string(message)))
+}
+
+// SetBalancerLearning turns AM-PPO learning on or off. Algorithms that do not
+// learn accept the call and ignore it.
+func (e *Engine) SetBalancerLearning(ctx context.Context, enabled bool) error {
+	body, err := json.Marshal(map[string]bool{"enabled": enabled})
+	if err != nil {
+		return err
+	}
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		e.loadBalancerURL+"/api/learning",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := (&http.Client{}).Do(request)
+	if err != nil {
+		return fmt.Errorf("setting model learning mode: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode == http.StatusOK {

@@ -258,6 +258,10 @@ fieldset.load-field legend {
   margin-bottom: 12px;
 }
 
+.load-report h3 + .load-report-grid + h3 {
+  margin-top: 16px;
+}
+
 .load-empty {
   margin: 8px 0 0;
 }

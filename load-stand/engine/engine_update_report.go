@@ -4,18 +4,32 @@ import (
 	"time"
 )
 
+func (e *Engine) recordCPUSample() {
+	servers, err := FetchServerStatuses(e.prometheusURL)
+	if err != nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.cpuSamples == nil {
+		e.cpuSamples = map[string]cpuSample{}
+	}
+	recordCPUUtilizations(servers, e.cpuSamples)
+}
+
+func (e *Engine) meanCPUUtilizations() []float64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return meanCPUUtilizations(e.cpuSamples)
+}
+
 func (e *Engine) updateReport() {
 	duration := time.Since(e.testStartedAt)
 	if duration < time.Millisecond {
 		duration = time.Millisecond
 	}
 
-	var after map[string]envoyEndpointCounters
-	if counters, err := fetchEnvoyEndpointCounters(e.envoyAdminURL); err != nil {
-		// Just skip Jain index if we can't fetch it, don't spam logs every second
-	} else {
-		after = counters
-	}
+	e.recordCPUSample()
 
 	latencyBuckets := make([]int64, len(e.stats.latencyBuckets))
 	for index := range e.stats.latencyBuckets {
@@ -26,8 +40,7 @@ func (e *Engine) updateReport() {
 		e.stats.FailedRequests.Load(),
 		latencyBuckets,
 		duration,
-		e.backendCounters,
-		after,
+		e.meanCPUUtilizations(),
 	)
 
 	e.mu.Lock()

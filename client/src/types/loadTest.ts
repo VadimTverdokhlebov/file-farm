@@ -30,8 +30,8 @@ export interface TestMetrics {
   p95Millis?: number;
   p99Millis: number;
   errorRatePercent: number;
-  jainIndex: number;
-  jainAvailable: boolean;
+  cpuFairnessIndex: number;
+  cpuFairnessAvailable: boolean;
   durationSeconds: number;
 }
 
@@ -55,6 +55,7 @@ export interface TestConfig {
   duration: number;
   endpoints: string[];
   algorithm: string;
+  freezeModel?: boolean;
   preset?: string;
   fileSizeKb?: number;
   fileSizeMinKb: number;

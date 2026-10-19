@@ -69,25 +69,33 @@ DQN_EPSILON = float(os.environ.get("DQN_EPSILON", "0.1"))
 EMA_ALPHA = float(os.environ.get("EMA_ALPHA", "0.2"))
 
 AM_PPO_LEARNING_RATE = float(os.environ.get("AM_PPO_LEARNING_RATE", "0.001"))
-AM_PPO_GAMMA = float(os.environ.get("AM_PPO_GAMMA", "0.99"))
+AM_PPO_GAMMA = float(os.environ.get("AM_PPO_GAMMA", "0.9"))
 AM_PPO_GAE_LAMBDA = float(os.environ.get("AM_PPO_GAE_LAMBDA", "0.95"))
 AM_PPO_CLIP_EPSILON = float(os.environ.get("AM_PPO_CLIP_EPSILON", "0.2"))
-AM_PPO_UPDATE_EPOCHS = int(os.environ.get("AM_PPO_UPDATE_EPOCHS", "1"))
-AM_PPO_ROLLOUT_SIZE = int(os.environ.get("AM_PPO_ROLLOUT_SIZE", "1"))
+AM_PPO_UPDATE_EPOCHS = int(os.environ.get("AM_PPO_UPDATE_EPOCHS", "4"))
+# Start with the policy learning. A test can freeze it through POST /api/learning.
+AM_PPO_LEARNING_ENABLED = _parse_bool(os.environ.get("AM_PPO_LEARNING_ENABLED", ""), default=True)
+AM_PPO_ROLLOUT_SIZE = int(os.environ.get("AM_PPO_ROLLOUT_SIZE", "16"))
 AM_PPO_VALUE_COEFFICIENT = float(os.environ.get("AM_PPO_VALUE_COEFFICIENT", "0.5"))
 AM_PPO_ENTROPY_COEFFICIENT = float(os.environ.get("AM_PPO_ENTROPY_COEFFICIENT", "0.001"))
 AM_PPO_LATENCY_SLA_SECONDS = float(os.environ.get("AM_PPO_LATENCY_SLA_SECONDS", "0.2"))
 AM_PPO_REWARD_LATENCY_WEIGHT = float(os.environ.get("AM_PPO_REWARD_LATENCY_WEIGHT", "1.0"))
 AM_PPO_REWARD_ERROR_WEIGHT = float(os.environ.get("AM_PPO_REWARD_ERROR_WEIGHT", "10.0"))
 AM_PPO_REWARD_CPU_WEIGHT = float(os.environ.get("AM_PPO_REWARD_CPU_WEIGHT", "0"))
-AM_PPO_REWARD_BALANCE_WEIGHT = float(os.environ.get("AM_PPO_REWARD_BALANCE_WEIGHT", "40.0"))
+AM_PPO_REWARD_BALANCE_WEIGHT = float(os.environ.get("AM_PPO_REWARD_BALANCE_WEIGHT", "100.0"))
+# Mean absolute CPU gap among live servers. Below the balance weight so a
+# wrong step still matters, but an even cluster scores better than a split.
+AM_PPO_REWARD_SPREAD_WEIGHT = float(os.environ.get("AM_PPO_REWARD_SPREAD_WEIGHT", "20.0"))
+AM_PPO_REWARD_DISK_WEIGHT = float(os.environ.get("AM_PPO_REWARD_DISK_WEIGHT", "10.0"))
 AM_PPO_REWARD_CAPACITY_WEIGHT = float(os.environ.get("AM_PPO_REWARD_CAPACITY_WEIGHT", "0"))
 AM_PPO_CPU_SATURATION = float(os.environ.get("AM_PPO_CPU_SATURATION", "0.90"))
 AM_PPO_CPU_HARD_LIMIT = float(os.environ.get("AM_PPO_CPU_HARD_LIMIT", "0.95"))
 AM_PPO_MIN_TRAINING_RPS = float(os.environ.get("AM_PPO_MIN_TRAINING_RPS", "1.0"))
 AM_PPO_REWARD_CHURN_WEIGHT = float(os.environ.get("AM_PPO_REWARD_CHURN_WEIGHT", "0.5"))
 AM_PPO_ACTION_HOLD_SEC = float(os.environ.get("AM_PPO_ACTION_HOLD_SEC", "2"))
-AM_PPO_METRICS_WINDOW = os.environ.get("AM_PPO_METRICS_WINDOW", "15s")
+# How far back to look for the last two scrapes. The value itself is irate(),
+# so this is not an average. 5s still finds a pair when one scrape is missed.
+AM_PPO_METRICS_WINDOW = os.environ.get("AM_PPO_METRICS_WINDOW", "5s")
 AM_PPO_MODEL_PATH = os.environ.get("AM_PPO_MODEL_PATH", "/app/data/am_ppo_model.pt")
 
 # Static capacity hints for WRR and for turning CPU usage into a utilization fraction.

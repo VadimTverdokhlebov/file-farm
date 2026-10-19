@@ -1,3 +1,4 @@
+import logging
 import os
 import socket
 import tempfile
@@ -6,6 +7,8 @@ from pathlib import Path
 import yaml
 
 from config import Backend, CLUSTER_NAME
+
+logger = logging.getLogger("lb-controller.eds")
 
 
 def resolve_host_ip(host: str) -> str:
@@ -25,7 +28,19 @@ def build_cluster_load_assignment(
         if weight <= 0:
             continue
 
-        address = resolve_host_ip(backend.host) if resolve_hosts else backend.host
+        if resolve_hosts:
+            try:
+                address = resolve_host_ip(backend.host)
+            except socket.gaierror:
+                # A stopped container disappears from DNS while its weight is
+                # still positive. Leave it out instead of aborting the update.
+                logger.warning(
+                    "Skipped EDS endpoint %s; its address does not resolve",
+                    backend.host,
+                )
+                continue
+        else:
+            address = backend.host
 
         lb_endpoints.append(
             {

@@ -32,6 +32,7 @@ export const LoadTestPage = () => {
   const [outageMaxSec, setOutageMaxSec] = useState(initialScenario.outageMaxSec);
   const [waveIterations, setWaveIterations] = useState(initialScenario.waveIterations);
   const [phases, setPhases] = useState<ScenarioPhase[]>(initialScenario.phases);
+  const [freezeModel, setFreezeModel] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const scenario = scenarioById(scenarioId);
 
@@ -89,6 +90,7 @@ export const LoadTestPage = () => {
       duration: plannedDuration,
       endpoints: scenario.endpoints,
       algorithm: selectedAlgorithm,
+      freezeModel: selectedAlgorithm === 'am_ppo' ? freezeModel : false,
       preset: scenario.id,
       fileSizeMinKb: phases.length > 0 ? phases[0].fileSizeMinKb : fileSizeMinKb,
       fileSizeMaxKb: phases.length > 0 ? phases[0].fileSizeMaxKb : fileSizeMaxKb,
@@ -292,7 +294,24 @@ export const LoadTestPage = () => {
                 ))}
               </select>
             </label>
+            {selectedAlgorithm === 'am_ppo' && (
+              <label className="load-check load-field-wide" htmlFor="freezeModel">
+                <input
+                  id="freezeModel"
+                  type="checkbox"
+                  checked={freezeModel}
+                  disabled={status.isRunning}
+                  onChange={(event) => setFreezeModel(event.target.checked)}
+                />
+                Не обучать модель во время теста
+              </label>
+            )}
           </div>
+          {selectedAlgorithm === 'am_ppo' && freezeModel && (
+            <p className="load-copy">
+              Модель только балансирует: без шума исследования, без накопления переходов и обновления весов.
+            </p>
+          )}
 
           <div className="load-actions">
             <Button onClick={handleStart} disabled={status.isRunning}>
@@ -344,8 +363,8 @@ export const LoadTestPage = () => {
                 <Metric label="p99, ms ↓" value={status.stats.report.p99Millis.toFixed(2)} />
                 <Metric label="Errors, % ↓" value={`${status.stats.report.errorRatePercent.toFixed(2)}%`} />
                 <Metric
-                  label="Jain"
-                  value={status.stats.report.jainAvailable ? status.stats.report.jainIndex.toFixed(3) : 'N/A'}
+                  label="CPU fairness ↑"
+                  value={status.stats.report.cpuFairnessAvailable ? status.stats.report.cpuFairnessIndex.toFixed(3) : 'N/A'}
                 />
               </div>
             </div>

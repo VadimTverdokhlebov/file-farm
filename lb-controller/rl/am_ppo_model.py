@@ -7,7 +7,7 @@ import torch
 from torch import nn
 from torch.distributions import Normal
 
-from config import Backend
+from config import AM_PPO_REWARD_SPREAD_WEIGHT, Backend
 from rl.types import ClusterState
 from rl.weights import masked_logits_to_eds_weights
 
@@ -15,6 +15,19 @@ logger = logging.getLogger("lb-controller.am_ppo")
 
 # cpu, disk, rps, active requests, health, cpu-limit share, memory-limit share.
 _FEATURES_PER_SERVER = 7
+
+# Exploration std range is exp(-3)..exp(-0.5) = 0.05..0.61. The start sits
+# strictly inside so the std receives gradient and can shrink as the policy learns.
+_LOG_STD_MIN = -3.0
+_LOG_STD_MAX = -0.5
+_LOG_STD_INIT = -1.0
+
+# Reward statistics behave like an average over about this many samples. A
+# larger window adapts too slowly when the reward scale changes between builds.
+_REWARD_STATS_WINDOW = 1_000.0
+
+# Stop the update epochs early once the policy has moved this far in KL terms.
+_TARGET_KL = 0.03
 
 
 @dataclass(frozen=True)
@@ -75,20 +88,70 @@ class AMPPORLModel(nn.Module):
                 nn.init.orthogonal_(module.weight, gain=math.sqrt(2.0))
                 nn.init.zeros_(module.bias)
         nn.init.orthogonal_(self._actor_score[-1].weight, gain=0.01)
+        self._init_critic()
 
-        self._log_std = nn.Parameter(torch.tensor([-1.0]))
+        # The bounds must contain the initial value. clamp() has zero gradient
+        # outside its range, so a start beyond a bound freezes the std for good.
+        self._log_std = nn.Parameter(torch.tensor([_LOG_STD_INIT]))
+        # Running reward scale. A constant critic of reward/(1-gamma) is about
+        # -200 when rewards sit near -2; dividing by this scale keeps values near 1.
+        self.register_buffer("_reward_mean", torch.zeros(()))
+        self.register_buffer("_reward_var", torch.ones(()))
+        self.register_buffer("_reward_count", torch.zeros(()))
+        # Presence marks a critic trained after the spread penalty. An older
+        # file mapped a larger deviation to a better value and is reset once.
+        self.register_buffer("_critic_spread_basis", torch.ones(()))
         self._optimizer = torch.optim.Adam(self.parameters(), lr=learning_rate)
         self._rollout: list[_Transition] = []
+        # False freezes the policy: no rollout, no updates, no saves, and the
+        # action is the distribution mean instead of a noisy sample.
+        self._learning_enabled = True
+        self._update_count = 0
 
         self._load_weights()
 
+    def _init_critic(self) -> None:
+        for module in self._critic_fe.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.orthogonal_(module.weight, gain=math.sqrt(2.0))
+                nn.init.zeros_(module.bias)
+        for module in self._critic_score.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.orthogonal_(module.weight, gain=math.sqrt(2.0))
+                nn.init.zeros_(module.bias)
+        # Small correction on top of the spread penalty in _critic_forward.
+        nn.init.orthogonal_(self._critic_score[-1].weight, gain=0.01)
+        nn.init.zeros_(self._critic_score[-1].bias)
+
+    def _critic_is_stuck(self) -> bool:
+        last = self._critic_score[-1]
+        return float(last.weight.detach().norm()) > 5.0 or abs(float(last.bias.detach())) > 2.0
+
     def _load_weights(self) -> None:
+        reset_critic = False
         if os.path.exists(self._model_path):
             try:
-                self.load_state_dict(torch.load(self._model_path, weights_only=True))
+                incompatible = self.load_state_dict(
+                    torch.load(self._model_path, weights_only=True),
+                    strict=False,
+                )
                 logger.info(f"Loaded AM-PPO weights from {self._model_path}")
+                if incompatible.missing_keys:
+                    logger.info("AM-PPO load left fresh buffers: %s", incompatible.missing_keys)
+                if "_critic_spread_basis" in incompatible.missing_keys:
+                    reset_critic = True
             except Exception as e:
                 logger.warning(f"Failed to load AM-PPO weights from {self._model_path}: {e}")
+        with torch.no_grad():
+            # A file saved by an older build may hold a value outside the range.
+            self._log_std.clamp_(_LOG_STD_MIN, _LOG_STD_MAX)
+        if self._critic_is_stuck():
+            reset_critic = True
+            logger.warning("Reset stuck AM-PPO critic; its output no longer depended on the state")
+        elif reset_critic:
+            logger.warning("Reset AM-PPO critic; its weights ranked a wider spread as a better state")
+        if reset_critic:
+            self._init_critic()
 
     def _save_weights(self) -> None:
         try:
@@ -101,13 +164,45 @@ class AMPPORLModel(nn.Module):
         f = self._actor_fe(states)  # (B, N, 32)
         f_pool = f.mean(dim=1, keepdim=True).expand(-1, states.size(1), -1)  # (B, N, 32)
         f_cat = torch.cat([f, f_pool], dim=-1)  # (B, N, 64)
-        return self._actor_score(f_cat).squeeze(-1)  # (B, N)
+        logits = self._actor_score(f_cat).squeeze(-1)  # (B, N)
+        # Weights are refit to a fixed total, so a logit shared by every server
+        # disappears. Keep the deviation from the live-server mean.
+        alive = states[..., 4].clamp(0.0, 1.0)
+        count = alive.sum(dim=-1, keepdim=True).clamp(min=1.0)
+        mean = (logits * alive).sum(dim=-1, keepdim=True) / count
+        return (logits - mean) * alive
 
     def _critic_forward(self, states: torch.Tensor) -> torch.Tensor:
-        # states: (B, N, F)
-        f = self._critic_fe(states)  # (B, N, 32)
-        f_pool = f.mean(dim=1)  # (B, 32)
-        return self._critic_score(f_pool).squeeze(-1)  # (B)
+        # states: (B, N, F). Value sees how far servers sit from each other.
+        # The mean level is removed, so an even cluster at 55% and at 100% match,
+        # while a split cluster does not.
+        encoded = self._critic_fe(states)
+        deviation = (encoded - encoded.mean(dim=1, keepdim=True)).abs().mean(dim=1)
+        learned = self._critic_score(deviation).squeeze(-1)
+        # Same CPU spread as the reward, in normalized-reward units. A gap that
+        # costs several reward points moves the value by several points, so the
+        # advantage is not just the raw reward.
+        cpu = states[..., 0].clamp(0.0, 1.0)
+        alive = states[..., 4].clamp(0.0, 1.0)
+        count = alive.sum(dim=-1).clamp(min=1.0)
+        mean_cpu = (cpu * alive).sum(dim=-1) / count
+        mad = ((cpu - mean_cpu.unsqueeze(-1)).abs() * alive).sum(dim=-1) / count
+        scale = self._reward_var.detach().sqrt().clamp(min=1e-3)
+        return learned - mad * (AM_PPO_REWARD_SPREAD_WEIGHT / scale)
+
+    @property
+    def learning_enabled(self) -> bool:
+        return self._learning_enabled
+
+    def set_learning_enabled(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        if enabled == self._learning_enabled:
+            return
+        self._learning_enabled = enabled
+        # A half-collected rollout belongs to the other mode and must not
+        # be mixed into the first update after learning is switched back on.
+        self.discard_rollout()
+        logger.info("AM-PPO learning %s", "enabled" if enabled else "frozen")
 
     def act(
         self,
@@ -123,10 +218,13 @@ class AMPPORLModel(nn.Module):
         alive_mask = tuple(server.is_healthy for server in state.servers)
         num_servers = len(backends)
         state_tensor = torch.tensor([features], dtype=torch.float32).view(1, num_servers, self._feature_per_server)
-        distribution = self._distribution(state_tensor)
 
         with torch.no_grad():
-            sampled_action = distribution.sample()[0]
+            distribution = self._distribution(state_tensor)
+            # Exploration noise is a training tool. A frozen model acts on the mean.
+            sampled_action = (
+                distribution.sample()[0] if self._learning_enabled else distribution.mean[0]
+            )
             mask_tensor = torch.tensor(alive_mask, dtype=torch.float32)
             log_probability = (distribution.log_prob(sampled_action) * mask_tensor).sum()
 
@@ -151,6 +249,8 @@ class AMPPORLModel(nn.Module):
         reward: float,
         next_state: ClusterState,
     ) -> None:
+        if not self._learning_enabled:
+            return
         features = tuple(state.to_am_ppo_feature_vector())
         next_features = tuple(next_state.to_am_ppo_feature_vector())
         # A join or leave changes the action size. Drop the open rollout
@@ -176,8 +276,7 @@ class AMPPORLModel(nn.Module):
 
     def _distribution(self, states: torch.Tensor) -> Normal:
         means = self._actor_forward(states)
-        # Std at most ~0.22 so a decision stays near the mean instead of a random share.
-        standard_deviations = self._log_std.clamp(-5.0, -1.5).exp().expand_as(means)
+        standard_deviations = self._log_std.clamp(_LOG_STD_MIN, _LOG_STD_MAX).exp().expand_as(means)
         return Normal(means, standard_deviations)
 
     def _update_policy(self) -> None:
@@ -194,22 +293,28 @@ class AMPPORLModel(nn.Module):
         actions = torch.tensor([step.action for step in rollout], dtype=torch.float32)
         alive_masks = torch.tensor([step.alive_mask for step in rollout], dtype=torch.float32)
 
+        raw_rewards = torch.tensor([step.reward for step in rollout], dtype=torch.float32)
+        normalized_rewards = self._normalize_rewards(raw_rewards)
+
         with torch.no_grad():
-            values = self._critic_forward(states).tolist()
-            next_values = self._critic_forward(next_states).tolist()
+            old_values = self._critic_forward(states)
+            next_values = self._critic_forward(next_states)
 
         advantages = [0.0] * len(rollout)
         returns = [0.0] * len(rollout)
         generalized_advantage = 0.0
+        reward_values = normalized_rewards.tolist()
+        value_list = old_values.tolist()
+        next_value_list = next_values.tolist()
         for index in reversed(range(len(rollout))):
             temporal_difference = (
-                rollout[index].reward + self._gamma * next_values[index] - values[index]
+                reward_values[index] + self._gamma * next_value_list[index] - value_list[index]
             )
             generalized_advantage = (
                 temporal_difference + self._gamma * self._gae_lambda * generalized_advantage
             )
             advantages[index] = generalized_advantage
-            returns[index] = generalized_advantage + values[index]
+            returns[index] = generalized_advantage + value_list[index]
 
         advantage_tensor = torch.tensor(advantages, dtype=torch.float32)
         if len(advantages) > 1:
@@ -222,20 +327,46 @@ class AMPPORLModel(nn.Module):
             dtype=torch.float32,
         )
 
-        for _ in range(self._update_epochs):
+        approx_kl = 0.0
+        clip_fraction = 0.0
+        entropy = torch.zeros(())
+        epochs_run = 0
+        first_policy_loss = 0.0
+        for epoch in range(self._update_epochs):
             distribution = self._distribution(states)
             new_log_probabilities = (
                 distribution.log_prob(actions) * alive_masks
             ).sum(dim=1)
             entropy = (distribution.entropy() * alive_masks).sum(dim=1).mean()
-            ratios = (new_log_probabilities - old_log_probabilities).exp()
+            log_ratios = new_log_probabilities - old_log_probabilities
+            ratios = log_ratios.exp()
+            with torch.no_grad():
+                approx_kl = float(((ratios - 1.0) - log_ratios).mean())
+                clip_fraction = float(((ratios - 1.0).abs() > self._clip_epsilon).float().mean())
+            # The policy already left the trust region; more epochs on the same
+            # batch would only overfit 16-32 noisy samples.
+            if epoch > 0 and approx_kl > 1.5 * _TARGET_KL:
+                break
             unclipped = ratios * advantage_tensor
             clipped = ratios.clamp(
                 1.0 - self._clip_epsilon,
                 1.0 + self._clip_epsilon,
             ) * advantage_tensor
             policy_loss = -torch.minimum(unclipped, clipped).mean()
-            value_loss = (self._critic_forward(states) - return_tensor).square().mean()
+            if epoch == 0:
+                first_policy_loss = float(policy_loss.detach())
+            epochs_run += 1
+            values = self._critic_forward(states)
+            clipped_values = old_values + (values - old_values).clamp(
+                -self._clip_epsilon,
+                self._clip_epsilon,
+            )
+            # Keep the worse fit so one update cannot drag the value far from
+            # the prediction that produced this batch.
+            value_loss = torch.maximum(
+                (values - return_tensor).square(),
+                (clipped_values - return_tensor).square(),
+            ).mean()
             loss = (
                 policy_loss
                 + self._value_coefficient * value_loss
@@ -248,11 +379,43 @@ class AMPPORLModel(nn.Module):
             self._optimizer.step()
 
         self._save_weights()
-
+        self._update_count += 1
         logger.info(
-            "AM-PPO update transitions=%d reward_mean=%.4f policy_loss=%.4f value_loss=%.4f",
+            "AM-PPO update transitions=%d epochs=%d reward_mean=%.4f reward_scale=%.4f value_mean=%.4f "
+            "policy_loss=%.4f value_loss=%.4f kl=%.4f clip=%.2f std=%.3f",
             len(rollout),
-            sum(step.reward for step in rollout) / len(rollout),
-            float(policy_loss.detach().item()),
+            epochs_run,
+            float(raw_rewards.mean()),
+            float(self._reward_var.sqrt()),
+            float(old_values.mean()),
+            first_policy_loss,
             float(value_loss.detach().item()),
+            approx_kl,
+            clip_fraction,
+            float(self._log_std.detach().clamp(_LOG_STD_MIN, _LOG_STD_MAX).exp()),
         )
+
+    def _normalize_rewards(self, rewards: torch.Tensor) -> torch.Tensor:
+        batch_count = rewards.numel()
+        batch_mean = rewards.mean()
+        batch_var = rewards.var(unbiased=False) if batch_count > 1 else rewards.new_zeros(())
+        count = self._reward_count
+        if float(count) <= 0.0:
+            new_mean = batch_mean
+            new_var = batch_var if batch_count > 1 else rewards.new_ones(())
+            new_count = rewards.new_tensor(float(batch_count))
+        else:
+            total = count + batch_count
+            delta = batch_mean - self._reward_mean
+            new_mean = self._reward_mean + delta * batch_count / total
+            new_var = (
+                count * self._reward_var
+                + batch_count * batch_var
+                + delta.square() * count * batch_count / total
+            ) / total
+            new_count = total.clamp(max=_REWARD_STATS_WINDOW)
+        self._reward_mean.copy_(new_mean.detach())
+        self._reward_var.copy_(new_var.detach().clamp(min=1e-4))
+        self._reward_count.copy_(new_count.detach())
+        scale = self._reward_var.sqrt().clamp(min=1e-3)
+        return (rewards - self._reward_mean) / scale

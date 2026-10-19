@@ -55,11 +55,14 @@ type StatusSnapshot struct {
 }
 
 type TestConfig struct {
-	Concurrency    int         `json:"concurrency"`
-	Duration       int         `json:"duration"`
-	Endpoints      []string    `json:"endpoints"`
-	Preset         string      `json:"preset"`
-	Algorithm      string      `json:"algorithm"`
+	Concurrency int      `json:"concurrency"`
+	Duration    int      `json:"duration"`
+	Endpoints   []string `json:"endpoints"`
+	Preset      string   `json:"preset"`
+	Algorithm   string   `json:"algorithm"`
+	// FreezeModel stops the AM-PPO policy from learning for this test. The
+	// model keeps balancing, but acts on its mean and does not update.
+	FreezeModel    bool        `json:"freezeModel"`
 	FileSizeKB     int         `json:"fileSizeKb"`
 	FileSizeMinKB  int         `json:"fileSizeMinKb"`
 	FileSizeMaxKB  int         `json:"fileSizeMaxKb"`
@@ -102,7 +105,7 @@ type Engine struct {
 	waveIndex             int
 	waveCount             int
 	plannedWaveIterations int
-	backendCounters       map[string]envoyEndpointCounters
+	cpuSamples            map[string]cpuSample
 	builder               *PayloadBuilder
 }
 
@@ -331,6 +334,15 @@ func (e *Engine) StartTest(rawConfig TestConfig) error {
 		}
 	}
 
+	// Always sent, so an unchecked box turns learning back on after a frozen test.
+	learningCtx, learningCancel := context.WithTimeout(ctx, 5*time.Second)
+	err := e.SetBalancerLearning(learningCtx, !config.FreezeModel)
+	learningCancel()
+	if err != nil {
+		e.abortTest()
+		return fmt.Errorf("failed to set model learning mode: %w", err)
+	}
+
 	preset := config.Preset
 	if preset == "" {
 		preset = "custom"
@@ -364,12 +376,9 @@ func (e *Engine) StartTest(rawConfig TestConfig) error {
 		log.Printf("Warmup warning: %v", err)
 	}
 	e.resetLoadStats()
-	e.backendCounters = nil
-	if counters, err := fetchEnvoyEndpointCounters(e.envoyAdminURL); err != nil {
-		log.Printf("Envoy endpoint counters unavailable; Jain index will be omitted: %v", err)
-	} else {
-		e.backendCounters = counters
-	}
+	e.mu.Lock()
+	e.cpuSamples = map[string]cpuSample{}
+	e.mu.Unlock()
 	waveIterations := resolvedWaveIterations(config)
 	e.mu.Lock()
 	e.testStartedAt = time.Now()
@@ -552,12 +561,7 @@ func (e *Engine) abortTest() {
 
 func (e *Engine) finishTest() {
 	duration := time.Since(e.testStartedAt)
-	var after map[string]envoyEndpointCounters
-	if counters, err := fetchEnvoyEndpointCounters(e.envoyAdminURL); err != nil {
-		log.Printf("Envoy endpoint counters unavailable; Jain index will be omitted: %v", err)
-	} else {
-		after = counters
-	}
+	e.recordCPUSample()
 
 	latencyBuckets := make([]int64, len(e.stats.latencyBuckets))
 	for index := range e.stats.latencyBuckets {
@@ -568,8 +572,7 @@ func (e *Engine) finishTest() {
 		e.stats.FailedRequests.Load(),
 		latencyBuckets,
 		duration,
-		e.backendCounters,
-		after,
+		e.meanCPUUtilizations(),
 	)
 
 	e.mu.Lock()
@@ -600,14 +603,14 @@ func (e *Engine) finishTest() {
 		}
 	}
 	log.Printf(
-		"Test completed: RPS=%.2f p50=%.2fms p95=%.2fms p99=%.2fms errors=%.2f%% Jain=%.4f (available=%t)",
+		"Test completed: RPS=%.2f p50=%.2fms p95=%.2fms p99=%.2fms errors=%.2f%% CPU fairness=%.4f (available=%t)",
 		report.RPS,
 		report.P50Millis,
 		report.P95Millis,
 		report.P99Millis,
 		report.ErrorRatePercent,
-		report.JainIndex,
-		report.JainAvailable,
+		report.CpuFairnessIndex,
+		report.CpuFairnessAvailable,
 	)
 }
 

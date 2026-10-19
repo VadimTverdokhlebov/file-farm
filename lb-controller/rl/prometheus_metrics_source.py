@@ -52,6 +52,8 @@ class PrometheusMetricsSource(MetricsSource):
         self._cpu_limits = cpu_limits
         self._memory_limits_bytes = memory_limits_bytes
         self._cpu_limit_normalizer = cpu_limit_normalizer
+        # Lookback only. irate uses the last two scrapes inside it, so a 1s
+        # scrape becomes the last second, not an average over the whole window.
         self._rate_window = validate_rate_window(rate_window)
         self._client = PrometheusClient(prometheus_url)
         self._step_index = 0
@@ -72,11 +74,11 @@ class PrometheusMetricsSource(MetricsSource):
                 f'file_farm_grpc_active_requests{{exported_instance="{instance_id}"}}'
             )
             request_rate_rps = self._client.query_scalar(
-                f'sum(rate(file_farm_grpc_requests_total{{exported_instance="{instance_id}"}}[{self._rate_window}]))'
+                f'sum(irate(file_farm_grpc_requests_total{{exported_instance="{instance_id}"}}[{self._rate_window}]))'
             )
             latency_p99_seconds = self._client.query_scalar(
                 "histogram_quantile(0.99, "
-                f'sum by (le) (rate(file_farm_grpc_request_duration_seconds_bucket{{exported_instance="{instance_id}"}}[{self._rate_window}]))'
+                f'sum by (le) (irate(file_farm_grpc_request_duration_seconds_bucket{{exported_instance="{instance_id}"}}[{self._rate_window}]))'
                 ")",
                 default=0.05,
             )
@@ -122,10 +124,10 @@ class PrometheusMetricsSource(MetricsSource):
 
     def _query_error_rate(self, instance_id: str) -> float:
         errors = self._client.query_scalar(
-            f'sum(rate(file_farm_grpc_requests_total{{exported_instance="{instance_id}",status="error"}}[{self._rate_window}]))'
+            f'sum(irate(file_farm_grpc_requests_total{{exported_instance="{instance_id}",status="error"}}[{self._rate_window}]))'
         )
         total = self._client.query_scalar(
-            f'sum(rate(file_farm_grpc_requests_total{{exported_instance="{instance_id}"}}[{self._rate_window}]))'
+            f'sum(irate(file_farm_grpc_requests_total{{exported_instance="{instance_id}"}}[{self._rate_window}]))'
         )
         if total <= 0.0:
             return 0.0
@@ -134,15 +136,19 @@ class PrometheusMetricsSource(MetricsSource):
     def _query_cpu_utilization(self, container_name: str, cpu_limit: float) -> float:
         # cpu="total" is one series per container. Summing it with per-mode series
         # would count the same cores twice and push a 2-CPU server over 100%.
-        usage = self._client.query_scalar(
-            "max(rate(container_cpu_usage_seconds_total"
+        # An empty irate (one scrape in the window) is a missed sample, not 0%.
+        # Fall back only then. A real 0.0 means two scrapes and a flat counter.
+        usage = self._client.query_optional(
+            "max(irate(container_cpu_usage_seconds_total"
             f'{{name="{container_name}",cpu="total"}}[{self._rate_window}]))'
         )
-        if usage <= 0.0:
-            usage = self._client.query_scalar(
-                "max(rate(container_cpu_usage_seconds_total"
+        if usage is None:
+            usage = self._client.query_optional(
+                "max(irate(container_cpu_usage_seconds_total"
                 f'{{name="{container_name}"}}[{self._rate_window}]))'
             )
+        if usage is None:
+            return math.nan
         measured_limit = self._query_cpu_limit_cores(container_name)
         limit = measured_limit if measured_limit > 0.0 else cpu_limit
         return cpu_utilization_ratio(usage, limit)
@@ -160,10 +166,10 @@ class PrometheusMetricsSource(MetricsSource):
 
     def _query_cpu_throttling(self, container_name: str) -> float:
         throttled = self._client.query_scalar(
-            f'rate(container_cpu_cfs_throttled_seconds_total{{name="{container_name}"}}[{self._rate_window}])'
+            f'irate(container_cpu_cfs_throttled_seconds_total{{name="{container_name}"}}[{self._rate_window}])'
         )
         usage = self._client.query_scalar(
-            f'rate(container_cpu_usage_seconds_total{{name="{container_name}"}}[{self._rate_window}])',
+            f'irate(container_cpu_usage_seconds_total{{name="{container_name}"}}[{self._rate_window}])',
             default=1.0,
         )
         if usage <= 0.0:
@@ -180,9 +186,9 @@ class PrometheusMetricsSource(MetricsSource):
 
     def _query_disk_io(self, container_name: str) -> float:
         return self._client.query_scalar(
-            "sum(rate(container_fs_reads_bytes_total"
+            "sum(irate(container_fs_reads_bytes_total"
             f'{{name="{container_name}"}}[{self._rate_window}])) + '
-            "sum(rate(container_fs_writes_bytes_total"
+            "sum(irate(container_fs_writes_bytes_total"
             f'{{name="{container_name}"}}[{self._rate_window}]))'
         )
 
@@ -195,7 +201,7 @@ class PrometheusMetricsSource(MetricsSource):
     def _query_cluster_latency_p99(self) -> float:
         return self._client.query_scalar(
             "histogram_quantile(0.99, "
-            f'sum by (le) (rate(file_farm_grpc_request_duration_seconds_bucket{{job="server"}}[{self._rate_window}]))'
+            f'sum by (le) (irate(file_farm_grpc_request_duration_seconds_bucket{{job="server"}}[{self._rate_window}]))'
             ")",
             default=0.05,
         )

@@ -14,23 +14,32 @@ class PrometheusClient:
         self._timeout_sec = timeout_sec
 
     def query_scalar(self, promql: str, *, default: float = 0.0) -> float:
+        value = self.query_optional(promql)
+        return default if value is None else value
+
+    def query_optional(self, promql: str) -> float | None:
+        """Scalar value, or None when the series is absent or not a finite number.
+
+        An empty irate window is None. A computed 0.0 stays 0.0: the counter
+        was present and did not increase.
+        """
         payload = self._instant_query(promql)
         if payload.get("status") != "success":
             logger.warning("Prometheus query failed: %s", promql)
-            return default
+            return None
 
         result = payload.get("data", {}).get("result", [])
         if not result:
-            return default
+            return None
 
         value = result[0].get("value", [None, None])[1]
         try:
             scalar = float(value)
         except (TypeError, ValueError):
-            return default
+            return None
         if not math.isfinite(scalar):
-            logger.debug("Prometheus returned a non-finite value for %s; using default", promql)
-            return default
+            logger.debug("Prometheus returned a non-finite value for %s", promql)
+            return None
         return scalar
 
     def _instant_query(self, promql: str) -> dict:

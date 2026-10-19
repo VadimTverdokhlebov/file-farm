@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -43,14 +44,14 @@ const defaultEnvoyAdminURL = "http://localhost:9901"
 const envoyEndpointStatsPrefix = "cluster.grpc_backend.endpoint."
 
 type TestMetrics struct {
-	RPS              float64 `json:"rps"`
-	P50Millis        float64 `json:"p50Millis"`
-	P95Millis        float64 `json:"p95Millis"`
-	P99Millis        float64 `json:"p99Millis"`
-	ErrorRatePercent float64 `json:"errorRatePercent"`
-	JainIndex        float64 `json:"jainIndex"`
-	JainAvailable    bool    `json:"jainAvailable"`
-	DurationSeconds  float64 `json:"durationSeconds"`
+	RPS                  float64 `json:"rps"`
+	P50Millis            float64 `json:"p50Millis"`
+	P95Millis            float64 `json:"p95Millis"`
+	P99Millis            float64 `json:"p99Millis"`
+	ErrorRatePercent     float64 `json:"errorRatePercent"`
+	CpuFairnessIndex     float64 `json:"cpuFairnessIndex"`
+	CpuFairnessAvailable bool    `json:"cpuFairnessAvailable"`
+	DurationSeconds      float64 `json:"durationSeconds"`
 }
 
 type envoyEndpointCounters struct {
@@ -125,13 +126,17 @@ func parseEnvoyEndpointCounters(payload envoyStatsResponse) map[string]envoyEndp
 	return result
 }
 
+type cpuSample struct {
+	sum   float64
+	count int
+}
+
 func summarizeTest(
 	successfulRequests int64,
 	failedRequests int64,
 	latencyBuckets []int64,
 	duration time.Duration,
-	before map[string]envoyEndpointCounters,
-	after map[string]envoyEndpointCounters,
+	cpuUtilizations []float64,
 ) TestMetrics {
 	result := TestMetrics{DurationSeconds: duration.Seconds()}
 	totalRequests := successfulRequests + failedRequests
@@ -144,8 +149,41 @@ func summarizeTest(
 	result.P50Millis = percentileMillis(latencyBuckets, 0.50)
 	result.P95Millis = percentileMillis(latencyBuckets, 0.95)
 	result.P99Millis = percentileMillis(latencyBuckets, 0.99)
-	result.JainIndex, result.JainAvailable = jainIndex(before, after)
+	result.CpuFairnessIndex, result.CpuFairnessAvailable = cpuFairnessIndex(cpuUtilizations)
 	return result
+}
+
+func recordCPUUtilizations(servers []ServerStatus, samples map[string]cpuSample) {
+	if samples == nil {
+		return
+	}
+	for _, server := range servers {
+		if server.Status != "up" || math.IsNaN(server.CPU) || math.IsInf(server.CPU, 0) {
+			continue
+		}
+		utilization := server.CPU / 100
+		if utilization < 0 {
+			utilization = 0
+		}
+		if utilization > 1 {
+			utilization = 1
+		}
+		sample := samples[server.Name]
+		sample.sum += utilization
+		sample.count++
+		samples[server.Name] = sample
+	}
+}
+
+func meanCPUUtilizations(samples map[string]cpuSample) []float64 {
+	utilizations := make([]float64, 0, len(samples))
+	for _, sample := range samples {
+		if sample.count == 0 {
+			continue
+		}
+		utilizations = append(utilizations, sample.sum/float64(sample.count))
+	}
+	return utilizations
 }
 
 func percentileMillis(bucketCounts []int64, percentile float64) float64 {
@@ -182,35 +220,31 @@ func percentileMillis(bucketCounts []int64, percentile float64) float64 {
 	return 0
 }
 
-func jainIndex(
-	before map[string]envoyEndpointCounters,
-	after map[string]envoyEndpointCounters,
-) (float64, bool) {
-	counts := make([]float64, 0, len(after))
-	for endpoint, final := range after {
-		initial, existedAtStart := before[endpoint]
-		if !existedAtStart || !final.Healthy {
-			continue
-		}
-		requests := final.Requests - initial.Requests
-		if requests < 0 {
-			continue
-		}
-		counts = append(counts, float64(requests))
-	}
-	if len(counts) == 0 {
+// cpuFairnessIndex is Jain's index on CPU utilization in [0, 1].
+// 1 means every included server sat at the same fraction of its own limit.
+func cpuFairnessIndex(utilizations []float64) (float64, bool) {
+	if len(utilizations) == 0 {
 		return 0, false
 	}
-
 	var sum, sumSquares float64
-	for _, count := range counts {
-		sum += count
-		sumSquares += count * count
+	for _, utilization := range utilizations {
+		if math.IsNaN(utilization) || math.IsInf(utilization, 0) {
+			return 0, false
+		}
+		if utilization < 0 {
+			utilization = 0
+		}
+		if utilization > 1 {
+			utilization = 1
+		}
+		sum += utilization
+		sumSquares += utilization * utilization
 	}
-	if sum == 0 || sumSquares == 0 {
+	if sumSquares == 0 {
 		return 0, false
 	}
-	return sum * sum / (float64(len(counts)) * sumSquares), true
+	count := float64(len(utilizations))
+	return sum * sum / (count * sumSquares), true
 }
 
 func latencyBucketIndex(duration time.Duration) int {

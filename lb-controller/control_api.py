@@ -18,33 +18,45 @@ def create_control_server(port: int, runtime: BalancerRuntime) -> ThreadingHTTPS
             self.wfile.write(body)
 
         def do_GET(self) -> None:
-            if self.path != "/api/algorithms":
-                self._send_json(404, {"error": "not found"})
+            if self.path == "/api/algorithms":
+                self._send_json(200, runtime.get_configuration())
                 return
-            self._send_json(200, runtime.get_configuration())
+            self._send_json(404, {"error": "not found"})
+
+        def _read_json(self) -> dict:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            if content_length <= 0 or content_length > 4096:
+                raise ValueError("invalid request size")
+            payload = json.loads(self.rfile.read(content_length))
+            if not isinstance(payload, dict):
+                raise ValueError("request body must be an object")
+            return payload
 
         def do_POST(self) -> None:
-            if self.path != "/api/algorithm":
+            if self.path not in ("/api/algorithm", "/api/learning"):
                 self._send_json(404, {"error": "not found"})
                 return
             try:
-                content_length = int(self.headers.get("Content-Length", "0"))
-                if content_length <= 0 or content_length > 4096:
-                    raise ValueError("invalid request size")
-                payload = json.loads(self.rfile.read(content_length))
-                algorithm = payload.get("algorithm")
-                if not isinstance(algorithm, str):
-                    raise ValueError("algorithm must be a string")
-                configuration = runtime.set_algorithm(algorithm)
+                payload = self._read_json()
+                if self.path == "/api/learning":
+                    enabled = payload.get("enabled")
+                    if not isinstance(enabled, bool):
+                        raise ValueError("enabled must be a boolean")
+                    result = runtime.set_learning_enabled(enabled)
+                else:
+                    algorithm = payload.get("algorithm")
+                    if not isinstance(algorithm, str):
+                        raise ValueError("algorithm must be a string")
+                    result = runtime.set_algorithm(algorithm)
             except (ValueError, json.JSONDecodeError) as error:
                 self._send_json(400, {"error": str(error)})
                 return
             except Exception:
-                logger.exception("Failed to switch balancer algorithm")
-                self._send_json(500, {"error": "failed to switch balancer"})
+                logger.exception("Failed to handle %s", self.path)
+                self._send_json(500, {"error": "request failed"})
                 return
 
-            self._send_json(200, configuration)
+            self._send_json(200, result)
 
         def log_message(self, format_string: str, *args) -> None:
             logger.info("%s - %s", self.address_string(), format_string % args)

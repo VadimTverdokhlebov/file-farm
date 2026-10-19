@@ -96,11 +96,20 @@ class ClusterState:
         return features
 
 
+def disk_busyness(server: ServerState) -> float:
+    """Disk bytes/s scaled to [0, 1] at 50 MB/s. Higher means the disk is busier."""
+    return _log_scale(server.disk_io_bytes_per_second, 50_000_000.0)
+
+
 def observed_server_signals(server: ServerState) -> tuple[float, float, float, float, float]:
-    """CPU, disk, RPS, active requests, and health, on the same scale as AM-PPO."""
+    """CPU, idle disk, RPS, active requests, and health, on the same scale as AM-PPO.
+
+    Disk is inverted: a busy disk is a low value. The trained weights treat a
+    higher input as a reason to add weight, so the busy server loses the nudge.
+    """
     return (
         _clamp(server.cpu_utilization),
-        _log_scale(server.disk_io_bytes_per_second, 50_000_000.0),
+        1.0 - disk_busyness(server),
         _log_scale(server.request_rate_rps, 100.0),
         _log_scale(server.active_requests, 100.0),
         1.0 if server.is_healthy else 0.0,

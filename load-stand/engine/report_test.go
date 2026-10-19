@@ -14,16 +14,8 @@ func TestSummarizeTestMetrics(t *testing.T) {
 	latencyBuckets[latencyBucketIndex(20*time.Millisecond)] = 50
 	latencyBuckets[latencyBucketIndex(200*time.Millisecond)] = 49
 	latencyBuckets[latencyBucketIndex(2*time.Second)] = 1
-	before := map[string]envoyEndpointCounters{
-		"10.0.0.1_50051": {Requests: 100, Healthy: true},
-		"10.0.0.2_50051": {Requests: 100, Healthy: true},
-	}
-	after := map[string]envoyEndpointCounters{
-		"10.0.0.1_50051": {Requests: 200, Healthy: true},
-		"10.0.0.2_50051": {Requests: 200, Healthy: true},
-	}
 
-	result := summarizeTest(90, 10, latencyBuckets, 10*time.Second, before, after)
+	result := summarizeTest(90, 10, latencyBuckets, 10*time.Second, []float64{0.5, 0.5})
 
 	if result.RPS != 10 {
 		t.Fatalf("expected 10 RPS, got %v", result.RPS)
@@ -37,24 +29,22 @@ func TestSummarizeTestMetrics(t *testing.T) {
 	if math.Abs(result.P95Millis-195.918367) > 0.001 {
 		t.Fatalf("unexpected p95 %v", result.P95Millis)
 	}
-	if !result.JainAvailable || result.JainIndex != 1 {
-		t.Fatalf("expected Jain index 1, got %v (available=%t)", result.JainIndex, result.JainAvailable)
+	if !result.CpuFairnessAvailable || result.CpuFairnessIndex != 1 {
+		t.Fatalf("expected CPU fairness 1, got %v (available=%t)", result.CpuFairnessIndex, result.CpuFairnessAvailable)
 	}
 }
 
-func TestJainIndexIgnoresUnhealthyEndpoints(t *testing.T) {
-	before := map[string]envoyEndpointCounters{
-		"10.0.0.1_50051": {Requests: 10, Healthy: true},
-		"10.0.0.2_50051": {Requests: 10, Healthy: true},
-	}
-	after := map[string]envoyEndpointCounters{
-		"10.0.0.1_50051": {Requests: 110, Healthy: true},
-		"10.0.0.2_50051": {Requests: 10, Healthy: false},
-	}
+func TestCPUFairnessSkipsStoppedServers(t *testing.T) {
+	samples := map[string]cpuSample{}
+	recordCPUUtilizations([]ServerStatus{
+		{Name: "file-farm-server-1", Status: "up", CPU: 100},
+		{Name: "file-farm-server-2", Status: "down", CPU: 0},
+		{Name: "file-farm-server-3", Status: "up", CPU: 50},
+	}, samples)
 
-	index, available := jainIndex(before, after)
-	if !available || index != 1 {
-		t.Fatalf("expected healthy-only Jain index 1, got %v (available=%t)", index, available)
+	index, available := cpuFairnessIndex(meanCPUUtilizations(samples))
+	if !available || math.Abs(index-0.9) > 1e-9 {
+		t.Fatalf("expected CPU fairness 0.9, got %v (available=%t)", index, available)
 	}
 }
 
@@ -96,18 +86,16 @@ func TestFetchEnvoyEndpointCountersUsesStatsEndpoint(t *testing.T) {
 	}
 }
 
-func TestJainIndexForUnevenTraffic(t *testing.T) {
-	before := map[string]envoyEndpointCounters{
-		"a": {Requests: 0, Healthy: true},
-		"b": {Requests: 0, Healthy: true},
-	}
-	after := map[string]envoyEndpointCounters{
-		"a": {Requests: 100, Healthy: true},
-		"b": {Requests: 0, Healthy: true},
-	}
-
-	index, available := jainIndex(before, after)
+func TestCPUFairnessForUnevenUtilization(t *testing.T) {
+	index, available := cpuFairnessIndex([]float64{1, 0})
 	if !available || math.Abs(index-0.5) > 1e-9 {
-		t.Fatalf("expected Jain index 0.5, got %v (available=%t)", index, available)
+		t.Fatalf("expected CPU fairness 0.5, got %v (available=%t)", index, available)
+	}
+}
+
+func TestCPUFairnessIsUnavailableWhenEveryServerIsIdle(t *testing.T) {
+	index, available := cpuFairnessIndex([]float64{0, 0})
+	if available || index != 0 {
+		t.Fatalf("expected idle cluster to omit fairness, got %v (available=%t)", index, available)
 	}
 }

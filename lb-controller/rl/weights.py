@@ -89,97 +89,6 @@ def equal_eds_weights(backends: tuple[Backend, ...], *, weight_total: int) -> di
     return weights
 
 
-# Stop nudging once CPUs are already within a couple of points, otherwise a
-# 0.1s loop would swap the same 5 points forever.
-_CPU_DEADBAND = 0.02
-_EVEN_LOAD_STEP = 5
-
-
-def step_toward_even_load(
-    backends: tuple[Backend, ...],
-    current: dict[str, int],
-    cpu: tuple[float, ...],
-    alive_mask: tuple[bool, ...],
-    *,
-    weight_total: int,
-    max_step: int = _EVEN_LOAD_STEP,
-) -> dict[str, int]:
-    """Shift weight by at most max_step toward equal CPU.
-
-    Health and CPU are the only inputs. The backend count is whatever the
-    caller passes. A stopped server goes to 0 immediately; a live server never
-    moves by more than max_step in one decision.
-    """
-    if len(cpu) != len(backends) or len(alive_mask) != len(backends):
-        raise ValueError("CPU and health must match backend count")
-    if max_step < 0:
-        raise ValueError("max_step must be non-negative")
-    if weight_total <= 0:
-        raise ValueError("weight_total must be positive")
-
-    healthy = [index for index, is_alive in enumerate(alive_mask) if is_alive]
-    weights = {backend.host: 0 for backend in backends}
-    if not healthy:
-        return weights
-
-    cpus = [_unit(cpu[index]) for index in healthy]
-    mean_cpu = sum(cpus) / len(cpus)
-    floors: dict[str, int] = {}
-    ceilings: dict[str, int] = {}
-    hosts: list[str] = []
-    for index, cpu_value in zip(healthy, cpus):
-        host = backends[index].host
-        base = max(current.get(host, 0), 0)
-        floor = max(1, base - max_step)
-        ceiling = base + max_step
-        if cpu_value > mean_cpu + _CPU_DEADBAND:
-            delta = -max_step
-        elif cpu_value < mean_cpu - _CPU_DEADBAND:
-            delta = max_step
-        else:
-            delta = 0
-        weights[host] = min(max(base + delta, floor), ceiling)
-        floors[host] = floor
-        ceilings[host] = ceiling
-        hosts.append(host)
-
-    _fit_inside_step(weights, hosts, floors, ceilings, weight_total)
-    return weights
-
-
-def _unit(value: float) -> float:
-    if not math.isfinite(value):
-        return 0.0
-    return min(max(value, 0.0), 1.0)
-
-
-def _fit_inside_step(
-    weights: dict[str, int],
-    hosts: list[str],
-    floors: dict[str, int],
-    ceilings: dict[str, int],
-    weight_total: int,
-) -> None:
-    # Unlike the model step, ceilings are never relaxed. A stopped server sheds
-    # its weight at once, and the survivors pick up at most one step.
-    for _ in range(weight_total):
-        total = sum(weights[host] for host in hosts)
-        if total == weight_total:
-            return
-        if total < weight_total:
-            room = [host for host in hosts if weights[host] < ceilings[host]]
-            if not room:
-                return
-            host = max(room, key=lambda item: ceilings[item] - weights[item])
-            weights[host] += 1
-            continue
-        room = [host for host in hosts if weights[host] > floors[host]]
-        if not room:
-            return
-        host = max(room, key=lambda item: weights[item] - floors[item])
-        weights[host] -= 1
-
-
 def _apply_capped_step(
     backends: tuple[Backend, ...],
     current: dict[str, int],
@@ -206,6 +115,10 @@ def _apply_capped_step(
     return weights
 
 
+# Share of the capped step that comes from the network. The CPU gap fills the rest.
+_NETWORK_STEP_SHARE = 0.70
+
+
 def step_toward_even_cpu(
     backends: tuple[Backend, ...],
     current: dict[str, int],
@@ -216,12 +129,14 @@ def step_toward_even_cpu(
     weight_total: int,
     max_step: int = 20,
     cpu_gain: float = 0.2,
+    network_share: float = _NETWORK_STEP_SHARE,
 ) -> dict[str, int]:
-    """Move one capped step from the current weights toward equal CPU.
+    """Move one capped step. The network supplies network_share of that step.
 
-    A server at 40% with weight 70 gains at most max_step, not a new softmax share.
-    The network logit is only a nudge inside that same cap. A stopped server drops
-    to 0 so traffic leaves it; that mass is the one case that may exceed the cap.
+    Both parts are clipped to ±max_step first, then mixed. A saturated logit
+    therefore moves 70% of the step and the CPU gap moves the other 30%.
+    A server at 40% with weight 70 still cannot jump to a new share in one
+    decision. A stopped server drops to 0; that mass may exceed the cap.
     """
     if len(cpu_utilization) != len(backends) or len(alive_mask) != len(backends):
         raise ValueError("CPU and health must match backend count")
@@ -229,6 +144,8 @@ def step_toward_even_cpu(
         raise ValueError("max_step must be non-negative")
     if weight_total <= 0:
         raise ValueError("weight_total must be positive")
+    if not 0.0 <= network_share <= 1.0:
+        raise ValueError("network_share must be between 0 and 1")
 
     healthy = [index for index, is_alive in enumerate(alive_mask) if is_alive]
     weights = {backend.host: 0 for backend in backends}
@@ -244,11 +161,19 @@ def step_toward_even_cpu(
         for index in healthy
     ]
     mean_cpu = sum(cpus) / len(cpus)
+    healthy_logits = [
+        logits[index] if index < len(logits) and math.isfinite(logits[index]) else 0.0
+        for index in healthy
+    ]
     deltas: list[float] = []
     for index, cpu in zip(healthy, cpus):
         logit = logits[index] if index < len(logits) and math.isfinite(logits[index]) else 0.0
-        nudge = math.tanh(logit) * (max_step / 2.0)
-        raw = cpu_gain * (mean_cpu - cpu) * weight_total + nudge
+        cpu_raw = cpu_gain * (mean_cpu - cpu) * weight_total
+        cpu_delta = min(max(cpu_raw, -float(max_step)), float(max_step))
+        # Same removal as the actor: only the gap between servers moves weight.
+        centered_logit = logit - (sum(healthy_logits) / len(healthy_logits))
+        network_delta = math.tanh(centered_logit) * max_step
+        raw = network_share * network_delta + (1.0 - network_share) * cpu_delta
         deltas.append(min(max(raw, -float(max_step)), float(max_step)))
 
     return _apply_capped_step(backends, current, healthy, deltas, weights, weight_total, max_step)
