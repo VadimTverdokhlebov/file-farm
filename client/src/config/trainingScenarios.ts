@@ -28,11 +28,22 @@ export type ScenarioPhase = {
   fileSizeMaxKb: number;
 };
 
+// Fixed load for watching how the model learns: one file size, endless run.
+export type QuickPreset = {
+  id: string;
+  label: string;
+  concurrency: number;
+  duration: number;
+  fileSizeMinKb: number;
+  fileSizeMaxKb: number;
+};
+
 export type TrainingScenario = {
   id: string;
   name: string;
   summary: string;
   weakness: string;
+  quickPresets?: QuickPreset[];
   endpoints: string[];
   concurrency: number;
   duration: number;
@@ -54,6 +65,32 @@ export const trainingScenarios: TrainingScenario[] = [
     summary: 'Все методы на серверах с 0,5, 1, 0,5 и 2 ядрами. Сжатие и загрузка упираются в процессор.',
     weakness:
       'Round robin и least request делят трафик поровну, поэтому серверы на половину ядра упираются в потолок, а сервер на 2 ядра простаивает. EMA уходит на тот сервер, который на мгновение быстрее, и может завалить маленький. Weighted round robin не снимает вес, когда процессор переходит 90%.',
+    quickPresets: [
+      {
+        id: 'load-85-90',
+        label: 'Средняя загрузка 85–90% от максимальной мощности: 28 клиентов, файл 512 КБ, без ограничения по времени',
+        concurrency: 28,
+        duration: 0,
+        fileSizeMinKb: 512,
+        fileSizeMaxKb: 512,
+      },
+      {
+        id: 'load-55-60',
+        label: 'Средняя загрузка 55–60% от максимальной мощности: 6 клиентов, файл 128 КБ, без ограничения по времени',
+        concurrency: 6,
+        duration: 0,
+        fileSizeMinKb: 128,
+        fileSizeMaxKb: 128,
+      },
+      {
+        id: 'load-45-50',
+        label: 'Средняя загрузка 45–50% от максимальной мощности: 3 клиента, файл 64 КБ, без ограничения по времени',
+        concurrency: 3,
+        duration: 0,
+        fileSizeMinKb: 64,
+        fileSizeMaxKb: 64,
+      },
+    ],
     endpoints: allEndpoints,
     concurrency: 36,
     duration: 180,
@@ -135,6 +172,17 @@ export const trainingScenarios: TrainingScenario[] = [
     ],
   },
 ];
+
+// Form values of a scenario, with the chosen quick preset laid over them.
+export function scenarioValues(scenario: TrainingScenario, quickPresetId: string | null) {
+  const preset = scenario.quickPresets?.find((item) => item.id === quickPresetId);
+  return {
+    concurrency: preset?.concurrency ?? scenario.concurrency,
+    duration: preset?.duration ?? scenario.duration,
+    fileSizeMinKb: preset?.fileSizeMinKb ?? scenario.fileSizeMinKb,
+    fileSizeMaxKb: preset?.fileSizeMaxKb ?? scenario.fileSizeMaxKb,
+  };
+}
 
 export function scenarioById(id: string): TrainingScenario {
   return trainingScenarios.find((scenario) => scenario.id === id) ?? trainingScenarios[0];

@@ -7,9 +7,8 @@ import torch
 from torch import nn
 from torch.distributions import Normal
 
-from config import AM_PPO_REWARD_SPREAD_WEIGHT, Backend
+from config import AM_PPO_REWARD_SPREAD_WEIGHT
 from rl.types import ClusterState
-from rl.weights import masked_logits_to_eds_weights
 
 logger = logging.getLogger("lb-controller.am_ppo")
 
@@ -32,10 +31,11 @@ _TARGET_KL = 0.03
 
 @dataclass(frozen=True)
 class PpoAction:
+    """One sampled decision. Turning logits into weights is the balancer's job."""
+
     raw_logits: tuple[float, ...]
     alive_mask: tuple[bool, ...]
     log_probability: float
-    weights: dict[str, int]
 
 
 @dataclass(frozen=True)
@@ -98,9 +98,6 @@ class AMPPORLModel(nn.Module):
         self.register_buffer("_reward_mean", torch.zeros(()))
         self.register_buffer("_reward_var", torch.ones(()))
         self.register_buffer("_reward_count", torch.zeros(()))
-        # Presence marks a critic trained after the spread penalty. An older
-        # file mapped a larger deviation to a better value and is reset once.
-        self.register_buffer("_critic_spread_basis", torch.ones(()))
         self._optimizer = torch.optim.Adam(self.parameters(), lr=learning_rate)
         self._rollout: list[_Transition] = []
         # False freezes the policy: no rollout, no updates, no saves, and the
@@ -128,9 +125,10 @@ class AMPPORLModel(nn.Module):
         return float(last.weight.detach().norm()) > 5.0 or abs(float(last.bias.detach())) > 2.0
 
     def _load_weights(self) -> None:
-        reset_critic = False
         if os.path.exists(self._model_path):
             try:
+                # strict=False: a file from an older build may carry keys that no
+                # longer exist, or miss a buffer that then keeps its fresh value.
                 incompatible = self.load_state_dict(
                     torch.load(self._model_path, weights_only=True),
                     strict=False,
@@ -138,19 +136,13 @@ class AMPPORLModel(nn.Module):
                 logger.info(f"Loaded AM-PPO weights from {self._model_path}")
                 if incompatible.missing_keys:
                     logger.info("AM-PPO load left fresh buffers: %s", incompatible.missing_keys)
-                if "_critic_spread_basis" in incompatible.missing_keys:
-                    reset_critic = True
             except Exception as e:
                 logger.warning(f"Failed to load AM-PPO weights from {self._model_path}: {e}")
         with torch.no_grad():
             # A file saved by an older build may hold a value outside the range.
             self._log_std.clamp_(_LOG_STD_MIN, _LOG_STD_MAX)
         if self._critic_is_stuck():
-            reset_critic = True
             logger.warning("Reset stuck AM-PPO critic; its output no longer depended on the state")
-        elif reset_critic:
-            logger.warning("Reset AM-PPO critic; its weights ranked a wider spread as a better state")
-        if reset_critic:
             self._init_critic()
 
     def _save_weights(self) -> None:
@@ -204,19 +196,10 @@ class AMPPORLModel(nn.Module):
         self.discard_rollout()
         logger.info("AM-PPO learning %s", "enabled" if enabled else "frozen")
 
-    def act(
-        self,
-        state: ClusterState,
-        backends: tuple[Backend, ...],
-        *,
-        weight_total: int,
-    ) -> PpoAction:
-        if len(state.servers) != len(backends):
-            raise ValueError("State and backend sizes must match")
-
+    def act(self, state: ClusterState) -> PpoAction:
         features = tuple(state.to_am_ppo_feature_vector())
         alive_mask = tuple(server.is_healthy for server in state.servers)
-        num_servers = len(backends)
+        num_servers = len(alive_mask)
         state_tensor = torch.tensor([features], dtype=torch.float32).view(1, num_servers, self._feature_per_server)
 
         with torch.no_grad():
@@ -228,18 +211,10 @@ class AMPPORLModel(nn.Module):
             mask_tensor = torch.tensor(alive_mask, dtype=torch.float32)
             log_probability = (distribution.log_prob(sampled_action) * mask_tensor).sum()
 
-        raw_logits = tuple(float(value) for value in sampled_action.tolist())
-        weights = masked_logits_to_eds_weights(
-            backends,
-            raw_logits,
-            alive_mask,
-            weight_total=weight_total,
-        )
         return PpoAction(
-            raw_logits=raw_logits,
+            raw_logits=tuple(float(value) for value in sampled_action.tolist()),
             alive_mask=alive_mask,
             log_probability=float(log_probability.item()),
-            weights=weights,
         )
 
     def observe_transition(

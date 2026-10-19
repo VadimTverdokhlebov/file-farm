@@ -218,6 +218,10 @@ fieldset.load-field legend {
   color: #5c6b7a;
 }
 
+.load-weakness .load-check + .load-check {
+  margin-top: 8px;
+}
+
 .load-stats,
 .load-report-grid {
   display: grid;

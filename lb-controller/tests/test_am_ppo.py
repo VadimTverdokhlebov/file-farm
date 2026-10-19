@@ -18,7 +18,6 @@ from balancers.weighted_round_robin import WeightedRoundRobinBalancer
 from rl.weights import (
     capacity_eds_weights,
     logits_to_eds_weights,
-    masked_logits_to_eds_weights,
     step_toward_even_cpu,
 )
 
@@ -57,8 +56,6 @@ def make_state(
             backend_name=backend.name,
             host=backend.host,
             cpu_utilization=cpu[index],
-            cpu_throttling_rate=0.0,
-            memory_utilization=0.3,
             active_requests=2.0,
             request_rate_rps=request_rates[index],
             latency_p99_seconds=latency_p99,
@@ -66,7 +63,6 @@ def make_state(
             cpu_limit_cores=cpu_limits[index],
             memory_limit_bytes=1_073_741_824.0,
             is_healthy=healthy[index],
-            current_weight_share=0.5,
             disk_io_bytes_per_second=disk[index],
         )
         for index, backend in enumerate(BACKENDS)
@@ -138,8 +134,6 @@ class AMPPOTests(unittest.TestCase):
                 backend_name=backend.name,
                 host=backend.host,
                 cpu_utilization=0.9 if index == 0 else 0.2,
-                cpu_throttling_rate=0.0,
-                memory_utilization=0.3,
                 active_requests=2.0,
                 request_rate_rps=10.0,
                 latency_p99_seconds=0.1,
@@ -147,7 +141,6 @@ class AMPPOTests(unittest.TestCase):
                 cpu_limit_cores=(0.5, 1.0, 0.5, 2.0)[index],
                 memory_limit_bytes=1_073_741_824.0,
                 is_healthy=index != 2,
-                current_weight_share=0.25,
             )
             for index, backend in enumerate(backends)
         )
@@ -175,26 +168,6 @@ class AMPPOTests(unittest.TestCase):
                 "file-farm-server-4": 500,
             },
         )
-
-    def test_masked_weights_exclude_unhealthy_backend(self) -> None:
-        weights = masked_logits_to_eds_weights(
-            BACKENDS,
-            (10.0, 100.0),
-            (True, False),
-            weight_total=1000,
-        )
-
-        self.assertEqual(weights, {"server-1": 1000, "server-2": 0})
-
-    def test_all_unhealthy_backends_receive_zero_weight(self) -> None:
-        weights = masked_logits_to_eds_weights(
-            BACKENDS,
-            (0.0, 0.0),
-            (False, False),
-            weight_total=1000,
-        )
-
-        self.assertEqual(sum(weights.values()), 0)
 
     def test_non_finite_scores_fall_back_to_equal_weights(self) -> None:
         weights = logits_to_eds_weights(
@@ -253,16 +226,16 @@ class AMPPOTests(unittest.TestCase):
         model = make_model()
         first_state = make_state()
         second_state = make_state(cpu=(0.9, 0.4), latency_p99=0.3)
-        first_action = model.act(first_state, BACKENDS, weight_total=1000)
+        first_action = model.act(first_state)
         model.observe_transition(first_state, first_action, -0.2, second_state)
-        second_action = model.act(second_state, BACKENDS, weight_total=1000)
+        second_action = model.act(second_state)
         model.observe_transition(second_state, second_action, -1.0, first_state)
 
         self.assertEqual(model._rollout, [])
         self.assertTrue(all(torch.isfinite(parameter).all() for parameter in model.parameters()))
         self.assertEqual(model._update_count, 1)
 
-    def test_reward_combines_sla_errors_cpu_and_weight_churn(self) -> None:
+    def test_reward_is_spread_plus_churn_and_ignores_latency_and_errors(self) -> None:
         balancer = AMPPOBalancer(
             BACKENDS,
             metrics_source=StubMetricsSource(
@@ -272,86 +245,28 @@ class AMPPOTests(unittest.TestCase):
             ),
             model=make_model(),
             weight_total=1000,
-            latency_sla_seconds=0.2,
-            latency_weight=1.0,
-            error_weight=10.0,
-            cpu_weight=2.0,
             balance_weight=0.0,
-            spread_weight=0.0,
-            capacity_weight=0.0,
+            spread_weight=20.0,
+            disk_weight=0.0,
             churn_weight=0.5,
         )
-
-        reward = balancer._compute_reward(
-            make_state(
-                cpu=(0.9, 0.8),
-                errors=(0.1, 0.3),
-                request_rates=(10.0, 30.0),
-                latency_p99=0.4,
-            ),
-            {"server-1": 500, "server-2": 500},
-            {"server-1": 1000, "server-2": 0},
+        calm = make_state(cpu=(0.9, 0.8), latency_p99=0.0)
+        loud = make_state(
+            cpu=(0.9, 0.8),
+            errors=(0.1, 0.3),
+            request_rates=(10.0, 30.0),
+            latency_p99=2.0,
         )
+        before = {"server-1": 500, "server-2": 500}
+        after = {"server-1": 1000, "server-2": 0}
 
-        self.assertAlmostEqual(reward, -4.75)
-
-    def test_cpu_penalty_starts_at_90_percent_and_uses_heavier_weight(self) -> None:
-        balancer = AMPPOBalancer(
-            BACKENDS,
-            metrics_source=StubMetricsSource(
-                BACKENDS,
-                cpu_limits=(1.0, 1.0),
-                memory_limits_bytes=(1_073_741_824.0, 1_073_741_824.0),
-            ),
-            model=make_model(),
-            weight_total=1000,
-            latency_sla_seconds=0.2,
-            cpu_saturation=0.90,
-            latency_weight=1.0,
-            error_weight=10.0,
-            cpu_weight=8.0,
-            balance_weight=0.0,
-            spread_weight=0.0,
-            churn_weight=0.5,
+        # Spread 0.05 * 20 = 1.0. Moving 500 of 1000 points costs 0.5 * 0.5 = 0.25.
+        self.assertAlmostEqual(balancer._compute_reward(calm, before, after), -1.25)
+        # Latency and errors are cluster-wide, so they do not enter the reward.
+        self.assertAlmostEqual(
+            balancer._compute_reward(loud, before, after),
+            balancer._compute_reward(calm, before, after),
         )
-
-        reward = balancer._compute_reward(
-            make_state(
-                cpu=(1.0, 0.95),
-                errors=(0.0, 0.0),
-                request_rates=(10.0, 10.0),
-                latency_p99=0.0,
-            ),
-            {"server-1": 500, "server-2": 500},
-            {"server-1": 500, "server-2": 500},
-        )
-
-        # 100% -> 8, 95% -> 1, weight 8. A full server costs far more than a 2s p99 (10).
-        self.assertAlmostEqual(reward, -72.0)
-
-        hot_tail = balancer._compute_reward(
-            make_state(
-                cpu=(1.0, 0.5),
-                errors=(0.0, 0.0),
-                request_rates=(10.0, 10.0),
-                latency_p99=2.0,
-            ),
-            {"server-1": 500, "server-2": 500},
-            {"server-1": 500, "server-2": 500},
-        )
-        calm_tail = balancer._compute_reward(
-            make_state(
-                cpu=(0.9, 0.9),
-                errors=(0.0, 0.0),
-                request_rates=(10.0, 10.0),
-                latency_p99=2.0,
-            ),
-            {"server-1": 500, "server-2": 500},
-            {"server-1": 500, "server-2": 500},
-        )
-        self.assertAlmostEqual(hot_tail, -74.0)
-        self.assertAlmostEqual(calm_tail, -10.0)
-        self.assertLess(hot_tail, calm_tail)
 
     def test_even_cpu_utilization_scores_better_than_a_split(self) -> None:
         balancer = AMPPOBalancer(
@@ -363,10 +278,6 @@ class AMPPOTests(unittest.TestCase):
             ),
             model=make_model(),
             weight_total=1000,
-            latency_sla_seconds=0.2,
-            latency_weight=0.0,
-            error_weight=0.0,
-            cpu_weight=0.0,
             balance_weight=4.0,
             spread_weight=0.0,
             churn_weight=0.0,
@@ -409,12 +320,8 @@ class AMPPOTests(unittest.TestCase):
             ),
             model=make_model(),
             weight_total=1000,
-            latency_weight=0.0,
-            error_weight=0.0,
-            cpu_weight=0.0,
             balance_weight=0.0,
             spread_weight=20.0,
-            capacity_weight=0.0,
             disk_weight=0.0,
             churn_weight=0.0,
         )
@@ -437,11 +344,7 @@ class AMPPOTests(unittest.TestCase):
             ),
             model=make_model(),
             weight_total=1000,
-            latency_weight=0.0,
-            error_weight=0.0,
-            cpu_weight=0.0,
             balance_weight=0.0,
-            capacity_weight=0.0,
             disk_weight=20.0,
             churn_weight=0.0,
         )
@@ -538,30 +441,6 @@ class AMPPOTests(unittest.TestCase):
 
         self.assertTrue(torch.allclose(logits, torch.zeros_like(logits), atol=1e-5))
 
-    def test_shared_latency_does_not_enter_the_trained_reward(self) -> None:
-        clock = {"now": 0.0}
-        source = ScriptedMetricsSource([
-            make_state(latency_p99=0.0),
-            make_state(latency_p99=2.0),
-        ])
-        model = make_model(rollout_size=8)
-        balancer = AMPPOBalancer(
-            BACKENDS,
-            metrics_source=source,
-            model=model,
-            action_hold_seconds=0.0,
-            time_fn=lambda: clock["now"],
-            latency_weight=1.0,
-            latency_sla_seconds=0.2,
-        )
-
-        balancer.select()
-        clock["now"] = 2.0
-        balancer.select()
-
-        self.assertEqual(len(model._rollout), 1)
-        self.assertGreater(model._rollout[0].reward, -1.0)
-
     def test_network_nudge_stays_inside_the_weight_step(self) -> None:
         stepped = step_toward_even_cpu(
             BACKENDS,
@@ -600,8 +479,6 @@ class AMPPOTests(unittest.TestCase):
                 backend_name="server-3",
                 host="server-3",
                 cpu_utilization=0.4,
-                cpu_throttling_rate=0.0,
-                memory_utilization=0.3,
                 active_requests=2.0,
                 request_rate_rps=10.0,
                 latency_p99_seconds=0.1,
@@ -609,7 +486,6 @@ class AMPPOTests(unittest.TestCase):
                 cpu_limit_cores=1.0,
                 memory_limit_bytes=1_073_741_824.0,
                 is_healthy=True,
-                current_weight_share=0.3,
                 disk_io_bytes_per_second=1_000_000.0,
             ),
         )
@@ -623,53 +499,14 @@ class AMPPOTests(unittest.TestCase):
         )
         model = make_model(rollout_size=8)
 
-        pair_action = model.act(pair, BACKENDS, weight_total=1000)
+        pair_action = model.act(pair)
         model.observe_transition(pair, pair_action, -1.0, pair)
-        triple_action = model.act(triple, three_backends, weight_total=1000)
+        triple_action = model.act(triple)
         model.observe_transition(triple, triple_action, -1.0, triple)
 
-        self.assertEqual(len(triple_action.weights), 3)
-        self.assertEqual(sum(triple_action.weights.values()), 1000)
+        self.assertEqual(len(triple_action.raw_logits), 3)
         self.assertEqual(len(model._rollout), 1)
         self.assertEqual(len(model._rollout[0].action), 3)
-
-    def test_capacity_weights_score_better_than_equal_weights(self) -> None:
-        balancer = AMPPOBalancer(
-            BACKENDS,
-            metrics_source=StubMetricsSource(
-                BACKENDS,
-                cpu_limits=(0.5, 2.0),
-                memory_limits_bytes=(1_073_741_824.0, 1_073_741_824.0),
-            ),
-            model=make_model(),
-            weight_total=1000,
-            latency_weight=0.0,
-            error_weight=0.0,
-            cpu_weight=0.0,
-            balance_weight=0.0,
-            capacity_weight=8.0,
-            churn_weight=0.0,
-            action_hold_seconds=0.0,
-        )
-        state = make_state(cpu=(0.4, 0.4), cpu_limits=(0.5, 2.0), latency_p99=0.0)
-        equal = {"server-1": 500, "server-2": 500}
-        proportional = {"server-1": 200, "server-2": 800}
-
-        equal_reward = balancer._compute_reward(state, equal, equal)
-        proportional_reward = balancer._compute_reward(state, proportional, proportional)
-        # |0.5-0.2| + |0.5-0.8| = 0.6, divided by 2 is 0.3, times weight 8.
-        self.assertAlmostEqual(equal_reward, -2.4)
-        self.assertAlmostEqual(proportional_reward, 0.0)
-        self.assertGreater(proportional_reward, equal_reward)
-
-        dead = make_state(
-            healthy=(True, False),
-            cpu=(0.4, 0.0),
-            cpu_limits=(0.5, 2.0),
-            latency_p99=0.0,
-        )
-        parked = {"server-1": 1000, "server-2": 0}
-        self.assertAlmostEqual(balancer._compute_reward(dead, parked, parked), 0.0)
 
     def test_action_hold_keeps_weights_until_the_window_elapses(self) -> None:
         clock = {"now": 0.0}
@@ -838,9 +675,6 @@ class AMPPOTests(unittest.TestCase):
             ),
             model=make_model(),
             weight_total=1000,
-            latency_weight=0.0,
-            error_weight=0.0,
-            cpu_weight=0.0,
             balance_weight=10.0,
             spread_weight=0.0,
             disk_weight=0.0,
@@ -872,7 +706,7 @@ class AMPPOTests(unittest.TestCase):
         state = make_state(cpu=(0.9, 0.3))
         with self.assertLogs("lb-controller.am_ppo", level="INFO") as captured:
             for index in range(8):
-                action = model.act(state, BACKENDS, weight_total=1000)
+                action = model.act(state)
                 model.observe_transition(state, action, -1.0 if index % 2 else 1.0, state)
 
         line = next(message for message in captured.output if "AM-PPO update" in message)
@@ -921,7 +755,7 @@ class AMPPOTests(unittest.TestCase):
         before = logit_gap()
         for _ in range(1600):
             state, hot = sample_state()
-            action = model.act(state, BACKENDS, weight_total=1000)
+            action = model.act(state)
             reward = action.raw_logits[1 - hot] - action.raw_logits[hot]
             model.observe_transition(state, action, reward, state)
 
@@ -968,7 +802,7 @@ class AMPPOTests(unittest.TestCase):
             model_path=path,
         )
         state = make_state(cpu=(0.9, 0.3))
-        model.observe_transition(state, model.act(state, BACKENDS, weight_total=1000), -1.0, state)
+        model.observe_transition(state, model.act(state), -1.0, state)
         self.assertEqual(len(model._rollout), 1)
 
         model.set_learning_enabled(False)
@@ -976,13 +810,12 @@ class AMPPOTests(unittest.TestCase):
         self.assertEqual(model._rollout, [])
         before = [parameter.detach().clone() for parameter in model.parameters()]
 
-        actions = [model.act(state, BACKENDS, weight_total=1000) for _ in range(5)]
+        actions = [model.act(state) for _ in range(5)]
         for action in actions:
             model.observe_transition(state, action, -1.0, state)
 
         # No exploration noise: every decision is the same.
         self.assertEqual(len({action.raw_logits for action in actions}), 1)
-        self.assertEqual(len({tuple(action.weights.items()) for action in actions}), 1)
         self.assertEqual(model._rollout, [])
         self.assertEqual(model._update_count, 0)
         self.assertFalse(os.path.exists(path))
@@ -990,7 +823,7 @@ class AMPPOTests(unittest.TestCase):
             self.assertTrue(torch.equal(old, new.detach()))
 
         model.set_learning_enabled(True)
-        sampled = {model.act(state, BACKENDS, weight_total=1000).raw_logits for _ in range(5)}
+        sampled = {model.act(state).raw_logits for _ in range(5)}
         self.assertGreater(len(sampled), 1)
 
     def test_frozen_balancer_still_decides_but_collects_nothing(self) -> None:

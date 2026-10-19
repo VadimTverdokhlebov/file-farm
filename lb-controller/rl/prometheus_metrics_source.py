@@ -42,7 +42,6 @@ class PrometheusMetricsSource(MetricsSource):
         *,
         cpu_limits: tuple[float, ...],
         memory_limits_bytes: tuple[float, ...],
-        cpu_limit_normalizer: float = 4.0,
         rate_window: str = "1m",
     ) -> None:
         if len(cpu_limits) != len(backends) or len(memory_limits_bytes) != len(backends):
@@ -51,7 +50,6 @@ class PrometheusMetricsSource(MetricsSource):
         self._backends = backends
         self._cpu_limits = cpu_limits
         self._memory_limits_bytes = memory_limits_bytes
-        self._cpu_limit_normalizer = cpu_limit_normalizer
         # Lookback only. irate uses the last two scrapes inside it, so a 1s
         # scrape becomes the last second, not an average over the whole window.
         self._rate_window = validate_rate_window(rate_window)
@@ -63,7 +61,7 @@ class PrometheusMetricsSource(MetricsSource):
         backends: tuple[Backend, ...],
         current_weights: dict[str, int],
     ) -> ClusterState:
-        weight_total = max(sum(current_weights.values()), 1)
+        del current_weights
         servers: list[ServerState] = []
 
         for index, backend in enumerate(backends):
@@ -84,22 +82,14 @@ class PrometheusMetricsSource(MetricsSource):
             )
             error_rate = self._query_error_rate(instance_id)
             cpu_utilization = self._query_cpu_utilization(container_name, self._cpu_limits[index])
-            cpu_throttling_rate = self._query_cpu_throttling(container_name)
-            memory_utilization = self._query_memory_utilization(
-                container_name,
-                self._memory_limits_bytes[index],
-            )
             disk_io_bytes_per_second = self._query_disk_io(container_name)
             is_healthy = self._query_is_healthy(target_instance)
 
-            weight = current_weights.get(backend.host, 0)
             servers.append(
                 ServerState(
                     backend_name=backend.name,
                     host=backend.host,
                     cpu_utilization=cpu_utilization,
-                    cpu_throttling_rate=cpu_throttling_rate,
-                    memory_utilization=memory_utilization,
                     active_requests=active_requests,
                     request_rate_rps=request_rate_rps,
                     latency_p99_seconds=latency_p99_seconds,
@@ -107,7 +97,6 @@ class PrometheusMetricsSource(MetricsSource):
                     cpu_limit_cores=self._cpu_limits[index],
                     memory_limit_bytes=self._memory_limits_bytes[index],
                     is_healthy=is_healthy,
-                    current_weight_share=weight / weight_total,
                     disk_io_bytes_per_second=disk_io_bytes_per_second,
                 )
             )
@@ -163,26 +152,6 @@ class PrometheusMetricsSource(MetricsSource):
         if quota <= 0.0 or period <= 0.0:
             return 0.0
         return quota / period
-
-    def _query_cpu_throttling(self, container_name: str) -> float:
-        throttled = self._client.query_scalar(
-            f'irate(container_cpu_cfs_throttled_seconds_total{{name="{container_name}"}}[{self._rate_window}])'
-        )
-        usage = self._client.query_scalar(
-            f'irate(container_cpu_usage_seconds_total{{name="{container_name}"}}[{self._rate_window}])',
-            default=1.0,
-        )
-        if usage <= 0.0:
-            return 0.0
-        return min(throttled / usage, 1.0)
-
-    def _query_memory_utilization(self, container_name: str, memory_limit_bytes: float) -> float:
-        usage = self._client.query_scalar(
-            f'container_memory_working_set_bytes{{name="{container_name}"}}'
-        )
-        if memory_limit_bytes <= 0.0:
-            return 0.0
-        return min(usage / memory_limit_bytes, 1.0)
 
     def _query_disk_io(self, container_name: str) -> float:
         return self._client.query_scalar(

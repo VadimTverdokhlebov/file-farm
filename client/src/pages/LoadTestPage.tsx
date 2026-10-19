@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '../components/Button';
 import { ServerCharts } from '../components/ServerCharts';
-import { ScenarioPhase, maxTestFileSizeKb, scenarioById, trainingScenarios, trainingServerNames } from '../config/trainingScenarios';
+import { ScenarioPhase, maxTestFileSizeKb, scenarioById, scenarioValues, trainingScenarios, trainingServerNames } from '../config/trainingScenarios';
 import { useLoadTest } from '../hooks/useLoadTest';
 import './LoadTestPage.css';
 
@@ -23,10 +23,13 @@ export const LoadTestPage = () => {
   } = useLoadTest();
   const initialScenario = trainingScenarios[0];
   const [scenarioId, setScenarioId] = useState(initialScenario.id);
-  const [concurrency, setConcurrency] = useState(initialScenario.concurrency);
-  const [duration, setDuration] = useState(initialScenario.duration);
-  const [fileSizeMinKb, setFileSizeMinKb] = useState(initialScenario.fileSizeMinKb);
-  const [fileSizeMaxKb, setFileSizeMaxKb] = useState(initialScenario.fileSizeMaxKb);
+  // The first preset is on by default: its values are what a new page starts with.
+  const [quickPresetId, setQuickPresetId] = useState<string | null>(initialScenario.quickPresets?.[0]?.id ?? null);
+  const initialValues = scenarioValues(initialScenario, quickPresetId);
+  const [concurrency, setConcurrency] = useState(initialValues.concurrency);
+  const [duration, setDuration] = useState(initialValues.duration);
+  const [fileSizeMinKb, setFileSizeMinKb] = useState(initialValues.fileSizeMinKb);
+  const [fileSizeMaxKb, setFileSizeMaxKb] = useState(initialValues.fileSizeMaxKb);
   const [outageServers, setOutageServers] = useState<string[]>(initialScenario.outageServers);
   const [outageMinSec, setOutageMinSec] = useState(initialScenario.outageMinSec);
   const [outageMaxSec, setOutageMaxSec] = useState(initialScenario.outageMaxSec);
@@ -103,13 +106,25 @@ export const LoadTestPage = () => {
     });
   };
 
+  const applyValues = (values: ReturnType<typeof scenarioValues>) => {
+    setConcurrency(values.concurrency);
+    setDuration(values.duration);
+    setFileSizeMinKb(values.fileSizeMinKb);
+    setFileSizeMaxKb(values.fileSizeMaxKb);
+  };
+
+  // Checking one preset unchecks the other; unchecking returns the scenario defaults.
+  const toggleQuickPreset = (id: string, enabled: boolean) => {
+    const nextId = enabled ? id : null;
+    setQuickPresetId(nextId);
+    applyValues(scenarioValues(scenario, nextId));
+    setFormError(null);
+  };
+
   const applyScenario = (id: string) => {
     const next = scenarioById(id);
     setScenarioId(next.id);
-    setConcurrency(next.concurrency);
-    setDuration(next.duration);
-    setFileSizeMinKb(next.fileSizeMinKb);
-    setFileSizeMaxKb(next.fileSizeMaxKb);
+    applyValues(scenarioValues(next, quickPresetId));
     setOutageServers(next.outageServers);
     setOutageMinSec(next.outageMinSec);
     setOutageMaxSec(next.outageMaxSec);
@@ -168,7 +183,24 @@ export const LoadTestPage = () => {
               </button>
             ))}
           </div>
-          <p className="load-weakness">{scenario.weakness}</p>
+          {scenario.quickPresets ? (
+            <div className="load-weakness" title={scenario.weakness}>
+              {scenario.quickPresets.map((item) => (
+                <label className="load-check" htmlFor={item.id} key={item.id}>
+                  <input
+                    id={item.id}
+                    type="checkbox"
+                    checked={quickPresetId === item.id}
+                    disabled={status.isRunning}
+                    onChange={(event) => toggleQuickPreset(item.id, event.target.checked)}
+                  />
+                  {item.label}
+                </label>
+              ))}
+            </div>
+          ) : (
+            <p className="load-weakness">{scenario.weakness}</p>
+          )}
           {phases.length > 0 ? (
             <>
               <div className="load-fields">

@@ -40,11 +40,10 @@ class StubMetricsSource(MetricsSource):
         backends: tuple[Backend, ...],
         current_weights: dict[str, int],
     ) -> ClusterState:
-        weight_total = max(sum(current_weights.values()), 1)
+        del current_weights
         servers: list[ServerState] = []
 
         for index, backend in enumerate(backends):
-            weight = current_weights.get(backend.host, 0)
             # Synthetic values make the stub observable in logs/tests.
             load_bias = 0.15 * index
             servers.append(
@@ -52,8 +51,6 @@ class StubMetricsSource(MetricsSource):
                     backend_name=backend.name,
                     host=backend.host,
                     cpu_utilization=min(0.35 + load_bias + 0.02 * self._step_index, 0.95),
-                    cpu_throttling_rate=min(0.05 * index, 0.5),
-                    memory_utilization=min(0.25 + load_bias, 0.9),
                     active_requests=float(2 + index + self._step_index % 3),
                     request_rate_rps=20.0 + 5.0 * index,
                     latency_p99_seconds=0.08 + 0.02 * index,
@@ -61,7 +58,6 @@ class StubMetricsSource(MetricsSource):
                     cpu_limit_cores=self._cpu_limits[index],
                     memory_limit_bytes=self._memory_limits_bytes[index],
                     is_healthy=True,
-                    current_weight_share=weight / weight_total,
                     disk_io_bytes_per_second=1_000_000.0 * (index + 1),
                 )
             )
