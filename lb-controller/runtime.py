@@ -8,8 +8,8 @@ ALGORITHMS = (
     {"id": "round_robin", "name": "Round Robin"},
     {"id": "weighted_round_robin", "name": "Weighted Round Robin"},
     {"id": "ema", "name": "EMA"},
-    {"id": "least_request", "name": "Least Request"},
-    {"id": "random_choice", "name": "Random Choice"},
+    {"id": "least_request", "name": "Least Request (Envoy)"},
+    {"id": "random_choice", "name": "Random (Envoy)"},
     {"id": "am_ppo", "name": "AM-PPO"},
 )
 
@@ -58,6 +58,11 @@ class BalancerRuntime:
             self._algorithm = algorithm
             set_algorithm(algorithm)
             return self.get_configuration()
+
+    @property
+    def lb_policy(self) -> str:
+        with self._lock:
+            return self._balancer.lb_policy
 
     def select(self):
         with self._lock:

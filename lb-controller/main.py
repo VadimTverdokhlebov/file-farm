@@ -4,6 +4,7 @@ import time
 
 from config import (
     BACKENDS,
+    CDS_PATH,
     CLUSTER_NAME,
     CONTROL_PORT,
     EDS_PATH,
@@ -13,6 +14,7 @@ from config import (
     UPDATE_INTERVAL_SEC,
 )
 from control_api import create_control_server
+from envoy.cds_writer import write_cds_file
 from envoy.eds_writer import write_eds_file
 from metrics import set_endpoint_weights, start_metrics_server
 from runtime import BalancerRuntime
@@ -40,7 +42,14 @@ def main() -> None:
         RESOLVE_BACKEND_HOSTS,
     )
 
+    written_policy = None
     while True:
+        policy = runtime.lb_policy
+        if policy != written_policy:
+            # Policy first: a native balancer's equal weights then land on it.
+            write_cds_file(CDS_PATH, policy, eds_path=EDS_PATH)
+            logger.info("Set Envoy lb_policy=%s in %s", policy, CDS_PATH)
+            written_policy = policy
         decision = runtime.select()
         set_endpoint_weights(decision.weights)
         write_eds_file(EDS_PATH, BACKENDS, decision.weights, resolve_hosts=RESOLVE_BACKEND_HOSTS)

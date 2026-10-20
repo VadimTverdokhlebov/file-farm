@@ -68,14 +68,8 @@ def build_cluster_load_assignment(
     }
 
 
-def write_eds_file(
-    path: str,
-    backends: tuple[Backend, ...],
-    weights: dict[str, int],
-    *,
-    resolve_hosts: bool = True,
-) -> None:
-    payload = build_cluster_load_assignment(backends, weights, resolve_hosts=resolve_hosts)
+def write_yaml_atomically(path: str, payload: dict) -> None:
+    """Replace the file in one rename so Envoy never reads a half-written one."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
 
@@ -91,7 +85,22 @@ def write_eds_file(
             yaml.safe_dump(payload, handle, sort_keys=False)
             temp_path = handle.name
 
+        # Before the rename: tempfile creates 0600, and Envoy runs as another
+        # user, so a chmod after the rename leaves a window it cannot read.
+        os.chmod(temp_path, 0o644)
         os.replace(temp_path, target)
-        os.chmod(target, 0o644)
     finally:
         os.umask(previous_umask)
+
+
+def write_eds_file(
+    path: str,
+    backends: tuple[Backend, ...],
+    weights: dict[str, int],
+    *,
+    resolve_hosts: bool = True,
+) -> None:
+    write_yaml_atomically(
+        path,
+        build_cluster_load_assignment(backends, weights, resolve_hosts=resolve_hosts),
+    )

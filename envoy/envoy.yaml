@@ -16,6 +16,14 @@ stats_config:
             regex: ".*"
   use_all_default_tags: true
 
+# The cluster is read from a file lb-controller writes, so its lb_policy can
+# change with the selected algorithm and Envoy keeps running.
+dynamic_resources:
+  cds_config:
+    path_config_source:
+      path: /etc/envoy/dynamic/clusters.yaml
+    resource_api_version: V3
+
 static_resources:
   listeners:
     - name: listener_0
@@ -30,6 +38,9 @@ static_resources:
                 stat_prefix: ingress_http
                 route_config:
                   name: local_route
+                  # The cluster comes from the CDS file, so it may not exist yet when
+                  # this listener starts. Without this Envoy refuses to start.
+                  validate_clusters: false
                   virtual_hosts:
                     - name: local_service
                       domains: ['*']
@@ -80,24 +91,3 @@ static_resources:
                   - name: envoy.filters.http.router
                     typed_config:
                       '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
-  clusters:
-    - name: grpc_backend
-      connect_timeout: 5s
-      type: EDS
-      http2_protocol_options: {}
-      # Weights are pushed by lb-controller via file-based EDS
-      lb_policy: ROUND_ROBIN
-      eds_cluster_config:
-        eds_config:
-          path_config_source:
-            path: /etc/envoy/dynamic/endpoints.yaml
-          resource_api_version: V3
-        service_name: grpc_backend
-      track_cluster_stats:
-        per_endpoint_stats: true
-      health_checks:
-        - timeout: 1s
-          interval: 5s
-          unhealthy_threshold: 2
-          healthy_threshold: 1
-          tcp_health_check: {}

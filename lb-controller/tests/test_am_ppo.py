@@ -77,6 +77,9 @@ def make_state(
 
 
 def make_model(rollout_size: int = 2) -> AMPPORLModel:
+    # A file left by an earlier test would be loaded, with its reward statistics.
+    if os.path.exists("/tmp/am_ppo_test_model.pt"):
+        os.remove("/tmp/am_ppo_test_model.pt")
     return AMPPORLModel(
         learning_rate=3e-4,
         gamma=0.99,

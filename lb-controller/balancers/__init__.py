@@ -2,9 +2,8 @@ from balancers.base import Balancer, LoadDecision
 from balancers.am_ppo_balancer import AMPPOBalancer
 from balancers.ema_balancer import EmaBalancer
 from balancers.factory import create_metrics_source, parse_capacity_lists
-from balancers.least_request_balancer import LeastRequestBalancer
+from balancers.envoy_native import LeastRequestBalancer, RandomChoiceBalancer
 from balancers.round_robin import RoundRobinBalancer
-from balancers.random_choice_balancer import RandomChoiceBalancer
 from balancers.weighted_round_robin import WeightedRoundRobinBalancer
 from config import AM_PPO_METRICS_WINDOW, DQN_WEIGHT_TOTAL, EMA_ALPHA
 
@@ -38,11 +37,7 @@ def create_balancer(algorithm: str, backends) -> Balancer:
         )
 
     if algorithm in {"least_request", "least_connections"}:
-        return LeastRequestBalancer(
-            backends,
-            create_metrics_source(backends),
-            weight_total=DQN_WEIGHT_TOTAL,
-        )
+        return LeastRequestBalancer(backends, weight_total=DQN_WEIGHT_TOTAL)
 
     if algorithm == "random_choice":
         return RandomChoiceBalancer(backends, weight_total=DQN_WEIGHT_TOTAL)
