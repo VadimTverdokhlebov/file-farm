@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ServerHistoryPoint, ServerStatus } from '../types/loadTest';
+import { formatTick, niceMax } from './chartMath';
 
 const SERVER_COLORS = ['#1f6f5b', '#2563eb', '#d97706', '#be123c'];
 const TOTAL_COLOR = '#1f6f5b';
@@ -36,8 +37,27 @@ const PAD = { top: 10, right: 8, bottom: 28, left: 42 };
 const MINOR_TICK = 3;
 const MAJOR_TICK = 7;
 
-export function ServerCharts({ history }: { history: ServerHistoryPoint[] }) {
-  const [range, setRange] = useState<Range>(RANGES[0]);
+// A server that the test takes down on a schedule, in the same clock as the history.
+export type ServerOutageBand = {
+  server: string;
+  fromMs: number;
+  toMs: number;
+};
+
+export function ServerCharts({
+  history,
+  initialRangeMs,
+  outages,
+}: {
+  history: ServerHistoryPoint[];
+  // Window shown at first; the default is the shortest one.
+  initialRangeMs?: number;
+  // Shaded on every chart while the server is down by the schedule.
+  outages?: ServerOutageBand[];
+}) {
+  const [range, setRange] = useState<Range>(
+    RANGES.find((item) => item.ms === initialRangeMs) ?? RANGES[0],
+  );
   const rangeMs = range.ms;
   const names = serverNames(history);
   const windowEnd = history.length > 0 ? history[history.length - 1].at : Date.now();
@@ -89,6 +109,7 @@ export function ServerCharts({ history }: { history: ServerHistoryPoint[] }) {
                 fixedMax={metric.fixedMax}
                 windowStart={windowStart}
                 range={range}
+                outages={outages ?? []}
               />
             </article>
           ))}
@@ -105,6 +126,7 @@ function MetricChart({
   fixedMax,
   windowStart,
   range,
+  outages,
 }: {
   history: ServerHistoryPoint[];
   names: string[];
@@ -112,6 +134,7 @@ function MetricChart({
   fixedMax: number | null;
   windowStart: number;
   range: Range;
+  outages: ServerOutageBand[];
 }) {
   const windowMs = range.ms;
   const plotW = VIEW_W - PAD.left - PAD.right;
@@ -131,6 +154,24 @@ function MetricChart({
 
   return (
     <svg viewBox={`0 0 ${VIEW_W} ${VIEW_H}`} role="img" aria-label={metric}>
+      {outages
+        .filter((outage) => outage.toMs > windowStart && outage.fromMs < windowStart + windowMs)
+        .map((outage) => {
+          const left = xOf(outage.fromMs, windowStart, windowMs, plotW);
+          const right = xOf(outage.toMs, windowStart, windowMs, plotW);
+          return (
+            <g key={`${outage.server}-${outage.fromMs}`}>
+              <rect x={left} y={PAD.top} width={Math.max(right - left, 0)} height={plotH} className="load-chart-outage">
+                <title>{`${outage.server} остановлен с ${formatClock(outage.fromMs)} до ${formatClock(outage.toMs)}`}</title>
+              </rect>
+              {outage.fromMs >= windowStart && (
+                <text x={left + 3} y={PAD.top + 10} className="load-chart-outage-label">
+                  {`S${outage.server.replace(/\D+/g, '')}`}
+                </text>
+              )}
+            </g>
+          );
+        })}
       {ticks.map((tick) => {
         const y = yOf(tick, max, plotH);
         return (
@@ -361,22 +402,6 @@ function scaleMax(peak: number, fixedMax: number | null): number {
   return fixedMax == null ? auto : Math.min(fixedMax, auto);
 }
 
-function niceMax(peak: number): number {
-  const padded = Math.max(peak * 1.15, 0.1);
-  const magnitude = 10 ** Math.floor(Math.log10(padded));
-  return Math.ceil(padded / magnitude) * magnitude;
-}
-
-function formatTick(value: number): string {
-  if (!Number.isFinite(value)) {
-    return '0';
-  }
-  if (value >= 100 || Number.isInteger(value)) {
-    return String(Math.round(value));
-  }
-  return value.toFixed(1);
-}
-
 function formatLatest(history: ServerHistoryPoint[], name: string, metric: MetricKey): string {
   if (metric === 'eds') {
     return formatNumber(weightValue(history, history.length - 1, name) ?? 0);
@@ -388,6 +413,10 @@ function formatLatest(history: ServerHistoryPoint[], name: string, metric: Metri
 
 function formatNumber(value: number): string {
   return value >= 100 ? value.toFixed(0) : value.toFixed(1);
+}
+
+function formatClock(timestamp: number): string {
+  return new Date(timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
 function formatTickClock(timestamp: number, withSeconds: boolean): string {

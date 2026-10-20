@@ -126,7 +126,8 @@ fieldset.load-field legend {
   font-weight: 400;
 }
 
-.load-check input {
+.load-check input,
+.load-field .load-check input[type='checkbox'] {
   width: auto;
   padding: 0;
 }
@@ -292,6 +293,44 @@ fieldset.load-field legend {
   border-color: #1f6f5b;
   background: #1f6f5b;
   color: #fff;
+}
+
+.load-chart-range .load-algorithm-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.load-algorithm-toggle i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.load-chart-range .load-algorithm-toggle[aria-pressed='true'] {
+  border-color: #172033;
+  background: #172033;
+}
+
+.load-chart-range .load-algorithm-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.load-chart-outage {
+  fill: #be123c;
+  fill-opacity: 0.1;
+}
+
+.load-chart-outage-label {
+  fill: #be123c;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.load-best {
+  font-weight: 700;
+  color: #1f6f5b;
 }
 
 .load-charts {

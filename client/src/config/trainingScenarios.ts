@@ -53,6 +53,8 @@ export type TrainingScenario = {
   summary: string;
   weakness: string;
   quickPresets?: QuickPreset[];
+  // Runs every checked algorithm one after another and compares them on shared charts.
+  comparison?: boolean;
   endpoints: string[];
   concurrency: number;
   duration: number;
@@ -66,6 +68,41 @@ export type TrainingScenario = {
   waveIterations: number;
   phases: ScenarioPhase[];
 };
+
+// The three loads with a fixed outage schedule, shared by the dropout scenario and the
+// algorithm comparison so both run exactly the same test.
+const dropoutPresets: QuickPreset[] = [
+  {
+    id: 'dropout-85-90',
+    label: 'Средняя загрузка 85–90% от максимальной мощности: 28 клиентов, файл 512 КБ, 10 минут. Сервер 3 выпадает на 5-й минуте и включается на 6-й',
+    concurrency: 28,
+    duration: 600,
+    fileSizeMinKb: 512,
+    fileSizeMaxKb: 512,
+    outages: [{ server: 'file-farm-server-3', stopAtSec: 300, startAtSec: 360 }],
+  },
+  {
+    id: 'dropout-55-60',
+    label: 'Средняя загрузка 55–60% от максимальной мощности: 6 клиентов, файл 128 КБ, 10 минут. Сервер 1 выпадает на 3-й минуте, сервер 3 на 5-й; сервер 1 включается на 7-й минуте, сервер 3 на 8-й, оба сервера лежат 2 минуты',
+    concurrency: 6,
+    duration: 600,
+    fileSizeMinKb: 128,
+    fileSizeMaxKb: 128,
+    outages: [
+      { server: 'file-farm-server-1', stopAtSec: 180, startAtSec: 420 },
+      { server: 'file-farm-server-3', stopAtSec: 300, startAtSec: 480 },
+    ],
+  },
+  {
+    id: 'dropout-45-50',
+    label: 'Средняя загрузка 45–50% от максимальной мощности: 3 клиента, файл 64 КБ, 10 минут. Сервер 4 выпадает на 4-й минуте и включается на 7-й',
+    concurrency: 3,
+    duration: 600,
+    fileSizeMinKb: 64,
+    fileSizeMaxKb: 64,
+    outages: [{ server: 'file-farm-server-4', stopAtSec: 240, startAtSec: 420 }],
+  },
+];
 
 export const trainingScenarios: TrainingScenario[] = [
   {
@@ -119,38 +156,7 @@ export const trainingScenarios: TrainingScenario[] = [
     summary: 'Все методы. Случайный сервер из выбранных останавливается и через случайное время из диапазона запускается снова.',
     weakness:
       'Least request считает мёртвый сервер свободным и шлёт ему больше запросов. EMA принимает отсутствие задержки за быстрый ответ. Round robin и weighted round robin держат старую долю, пока не сработает проверка здоровья, и не готовятся к тому, что следующим упадёт уже другой сервер.',
-    quickPresets: [
-      {
-        id: 'dropout-85-90',
-        label: 'Средняя загрузка 85–90% от максимальной мощности: 28 клиентов, файл 512 КБ, 10 минут. Сервер 3 выпадает на 5-й минуте и включается на 6-й',
-        concurrency: 28,
-        duration: 600,
-        fileSizeMinKb: 512,
-        fileSizeMaxKb: 512,
-        outages: [{ server: 'file-farm-server-3', stopAtSec: 300, startAtSec: 360 }],
-      },
-      {
-        id: 'dropout-55-60',
-        label: 'Средняя загрузка 55–60% от максимальной мощности: 6 клиентов, файл 128 КБ, 10 минут. Сервер 1 выпадает на 3-й минуте, сервер 3 на 5-й; сервер 1 включается на 6-й минуте, сервер 3 на 8-й',
-        concurrency: 6,
-        duration: 600,
-        fileSizeMinKb: 128,
-        fileSizeMaxKb: 128,
-        outages: [
-          { server: 'file-farm-server-1', stopAtSec: 180, startAtSec: 360 },
-          { server: 'file-farm-server-3', stopAtSec: 300, startAtSec: 480 },
-        ],
-      },
-      {
-        id: 'dropout-45-50',
-        label: 'Средняя загрузка 45–50% от максимальной мощности: 3 клиента, файл 64 КБ, 10 минут. Сервер 4 выпадает на 4-й минуте и включается на 7-й',
-        concurrency: 3,
-        duration: 600,
-        fileSizeMinKb: 64,
-        fileSizeMaxKb: 64,
-        outages: [{ server: 'file-farm-server-4', stopAtSec: 240, startAtSec: 420 }],
-      },
-    ],
+    quickPresets: dropoutPresets,
     endpoints: allEndpoints,
     concurrency: 30,
     duration: 180,
@@ -165,15 +171,17 @@ export const trainingScenarios: TrainingScenario[] = [
     phases: [],
   },
   {
-    id: 'client-waves',
-    name: 'Волны клиентов',
-    summary: 'Все методы. Число клиентов и размер файлов меняются волнами: тишина, скачок, крупные файлы, снова тишина.',
+    id: 'algorithm-comparison',
+    name: 'Сравнение алгоритмов',
+    summary: 'Тест «Сервер выпадает» по очереди для отмеченных алгоритмов. Результаты накладываются на общие графики.',
     weakness:
-      'В тихой волне выгодная доля совпадает с weighted round robin: вес пропорционален ядрам. На скачке серверы на 0,5 ядра насыщаются, а у сервера на 2 ядра остаётся запас — фиксированные веса не могут временно отдать ему больше половины. На волне крупных файлов серверы с одинаковым числом ядер получают одинаковый вес, хотя у одного 512 МБ, а у другого 1 ГБ. Модель на пике уводит вес по загрузке и ошибкам, а в тишине возвращается к распределению по мощности.',
+      'Алгоритмы идут один за другим на одном кластере, а не одновременно. Нагрузка и расписание остановок серверов у всех одинаковые, между прогонами кластер успокаивается. Каждый алгоритм проходит тест один раз, поэтому небольшая разница на графиках может быть шумом.',
+    comparison: true,
+    quickPresets: dropoutPresets,
     endpoints: allEndpoints,
-    concurrency: 8,
-    duration: 180,
-    fileSizeMinKb: 256,
+    concurrency: 28,
+    duration: 600,
+    fileSizeMinKb: 512,
     fileSizeMaxKb: 512,
     warmupFiles: 8,
     randomOutages: false,
@@ -181,12 +189,7 @@ export const trainingScenarios: TrainingScenario[] = [
     outageMinSec: 15,
     outageMaxSec: 40,
     waveIterations: 1,
-    phases: [
-      { concurrency: 8, durationSec: 40, fileSizeMinKb: 256, fileSizeMaxKb: 512 },
-      { concurrency: 48, durationSec: 50, fileSizeMinKb: 1024, fileSizeMaxKb: 2048 },
-      { concurrency: 18, durationSec: 50, fileSizeMinKb: 2048, fileSizeMaxKb: maxTestFileSizeKb },
-      { concurrency: 8, durationSec: 40, fileSizeMinKb: 256, fileSizeMaxKb: 512 },
-    ],
+    phases: [],
   },
   {
     id: 'finale',

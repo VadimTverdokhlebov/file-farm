@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { TestStatus, TestConfig, LoadPreset, BalancerAlgorithm, BalancerConfiguration, ServerStatus, ServerHistoryPoint } from '../types/loadTest';
+import { TestStatus, TestConfig, LoadPreset, BalancerAlgorithm, BalancerConfiguration, ServerStatus, ServerHistoryPoint, SeriesStatus } from '../types/loadTest';
 import { fetchLoadStandJson, getLoadStandWsUrl, postLoadStandJson } from '../config/loadStand';
 
 interface UseLoadTestReturn {
@@ -11,6 +11,11 @@ interface UseLoadTestReturn {
   status: TestStatus;
   serverHistory: ServerHistoryPoint[];
   startTest: (config: TestConfig) => void;
+  startSeries: (config: TestConfig) => void;
+  // Light status from the one-second message: phase, current run, run states.
+  series: SeriesStatus | null;
+  // The same series with every sample, fetched over HTTP.
+  seriesResults: SeriesStatus | null;
   stopTest: () => void;
   setServerPower: (name: string, action: 'start' | 'stop') => Promise<void>;
   pendingServer: string | null;
@@ -20,6 +25,7 @@ interface UseLoadTestReturn {
 
 interface StatusPayload {
   isRunning: boolean;
+  series?: SeriesStatus | null;
   stats: TestStatus['stats'];
 }
 
@@ -33,6 +39,7 @@ interface WebSocketMessage {
 }
 
 const HISTORY_MS = 60 * 60 * 1000;
+const SERIES_POLL_MS = 3000;
 
 const defaultServers = (): ServerStatus[] =>
   [1, 2, 3, 4].map((index) => ({
@@ -60,6 +67,8 @@ export const useLoadTest = (): UseLoadTestReturn => {
   const [isLoading, setIsLoading] = useState(true);
   const [pendingServer, setPendingServer] = useState<string | null>(null);
   const [serverHistory, setServerHistory] = useState<ServerHistoryPoint[]>([]);
+  const [series, setSeries] = useState<SeriesStatus | null>(null);
+  const [seriesResults, setSeriesResults] = useState<SeriesStatus | null>(null);
   const ws = useRef<WebSocket | null>(null);
 
   useEffect(() => {
@@ -113,6 +122,7 @@ export const useLoadTest = (): UseLoadTestReturn => {
               waveIterations: Number(payload.stats.waveIterations) || 0,
             },
           });
+          setSeries(payload.series ?? null);
           setServerHistory((current) => {
             const next = current.concat({ at: Date.now(), servers });
             const cutoff = next[next.length - 1].at - HISTORY_MS;
@@ -131,6 +141,29 @@ export const useLoadTest = (): UseLoadTestReturn => {
     return () => ws.current?.close();
   }, []);
 
+  const refreshSeriesResults = useCallback(async () => {
+    try {
+      const results = await fetchLoadStandJson<SeriesStatus | null>('/api/series');
+      setSeriesResults(results ?? null);
+    } catch {
+      // The next poll tries again; the one-second status already shows the series state.
+    }
+  }, []);
+
+  // Samples are too big for the one-second message, so they are fetched separately,
+  // every few seconds while a series runs.
+  const seriesActive = series?.active ?? false;
+  useEffect(() => {
+    // Runs on load and again whenever the series starts or ends, so the final
+    // samples are fetched after the last second.
+    void refreshSeriesResults();
+    if (!seriesActive) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => void refreshSeriesResults(), SERIES_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [seriesActive, refreshSeriesResults]);
+
   const sendCommand = useCallback((action: string, payload: TestConfig | Record<string, never> = {}) => {
     if (ws.current?.readyState === WebSocket.OPEN) {
       setError(null);
@@ -143,6 +176,10 @@ export const useLoadTest = (): UseLoadTestReturn => {
   const startTest = useCallback((config: TestConfig) => {
     setServerHistory([]);
     sendCommand('start', config);
+  }, [sendCommand]);
+  const startSeries = useCallback((config: TestConfig) => {
+    setServerHistory([]);
+    sendCommand('startSeries', config);
   }, [sendCommand]);
   const stopTest = useCallback(() => sendCommand('stop'), [sendCommand]);
 
@@ -178,6 +215,9 @@ export const useLoadTest = (): UseLoadTestReturn => {
     status,
     serverHistory,
     startTest,
+    startSeries,
+    series,
+    seriesResults,
     stopTest,
     setServerPower,
     pendingServer,

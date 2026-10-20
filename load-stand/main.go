@@ -41,6 +41,8 @@ func main() {
 	mux.HandleFunc("/api/endpoints", apiHandler.HandleEndpoints)
 	mux.HandleFunc("/api/presets", apiHandler.HandlePresets)
 	mux.HandleFunc("/api/algorithms", apiHandler.HandleAlgorithms)
+	mux.HandleFunc("/api/series", apiHandler.HandleSeries)
+	mux.HandleFunc("/api/series/runs/", apiHandler.HandleSeriesServers)
 	mux.HandleFunc("/api/servers/", apiHandler.HandleServerPower)
 	mux.HandleFunc("/ws", apiHandler.HandleWebSocket)
 	mux.Handle("/metrics", promhttp.Handler())

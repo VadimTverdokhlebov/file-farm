@@ -78,6 +78,10 @@ type TestConfig struct {
 	OutagePlan     []PlannedOutage `json:"outagePlan,omitempty"`
 	Phases         []LoadPhase     `json:"phases,omitempty"`
 	WaveIterations *int            `json:"waveIterations,omitempty"`
+	// Algorithms and CooldownSec only apply to a series: the same test is run once
+	// per algorithm, with a pause between the runs.
+	Algorithms  []string `json:"algorithms,omitempty"`
+	CooldownSec int      `json:"cooldownSec,omitempty"`
 }
 
 // PlannedOutage is one server down from StopAtSec to StartAtSec, counted from the
@@ -119,6 +123,9 @@ type Engine struct {
 	plannedWaveIterations int
 	cpuSamples            map[string]cpuSample
 	builder               *PayloadBuilder
+	seriesMu              sync.Mutex
+	series                *SeriesStatus
+	seriesCancel          context.CancelFunc
 }
 
 func NewEngine(target string, protoDir string, envoyAdminURL string, loadBalancerURL string, prometheusURL string, dockerSocket string) (*Engine, error) {
@@ -280,6 +287,37 @@ func isStopError(ctx context.Context, err error) bool {
 	return false
 }
 
+// validateTestConfig checks everything about a test that can be known before it starts.
+func validateTestConfig(config TestConfig) error {
+	if len(config.Endpoints) == 0 {
+		return fmt.Errorf("no endpoints selected")
+	}
+	if config.FileSizeMinKB < 1 || config.FileSizeMaxKB < config.FileSizeMinKB || config.FileSizeMaxKB > MaxTestFileSizeKB() {
+		return fmt.Errorf("file size range must be between 1 and %d KB, with min <= max", MaxTestFileSizeKB())
+	}
+	if err := validatePhases(config.Phases); err != nil {
+		return err
+	}
+	if err := validateOutages(config); err != nil {
+		return err
+	}
+	if err := validateOutagePlan(config); err != nil {
+		return err
+	}
+	if config.StopServer != "" && len(config.OutageServers) == 0 && len(config.OutagePlan) == 0 {
+		if !allowedServerName(config.StopServer) {
+			return fmt.Errorf("stopServer must be one of file-farm-server-1..4")
+		}
+		if config.StopAfterSec < 5 {
+			return fmt.Errorf("stopAfterSec must be at least 5 seconds")
+		}
+		if config.Duration > 0 && config.StopAfterSec >= config.Duration {
+			return fmt.Errorf("stopAfterSec must be earlier than the test duration")
+		}
+	}
+	return nil
+}
+
 func (e *Engine) StartTest(rawConfig TestConfig) error {
 	config := rawConfig.WithDefaults()
 
@@ -288,41 +326,14 @@ func (e *Engine) StartTest(rawConfig TestConfig) error {
 		e.mu.Unlock()
 		return fmt.Errorf("test already running")
 	}
-	if len(config.Endpoints) == 0 {
-		e.mu.Unlock()
-		return fmt.Errorf("no endpoints selected")
-	}
-	if config.FileSizeMinKB < 1 || config.FileSizeMaxKB < config.FileSizeMinKB || config.FileSizeMaxKB > MaxTestFileSizeKB() {
-		e.mu.Unlock()
-		return fmt.Errorf("file size range must be between 1 and %d KB, with min <= max", MaxTestFileSizeKB())
-	}
-	if err := validatePhases(config.Phases); err != nil {
+	if err := validateTestConfig(config); err != nil {
 		e.mu.Unlock()
 		return err
-	}
-	if err := validateOutages(config); err != nil {
-		e.mu.Unlock()
-		return err
-	}
-	if err := validateOutagePlan(config); err != nil {
-		e.mu.Unlock()
-		return err
-	}
-	if config.StopServer != "" && len(config.OutageServers) == 0 && len(config.OutagePlan) == 0 {
-		if !allowedServerName(config.StopServer) {
-			e.mu.Unlock()
-			return fmt.Errorf("stopServer must be one of file-farm-server-1..4")
-		}
-		if config.StopAfterSec < 5 {
-			e.mu.Unlock()
-			return fmt.Errorf("stopAfterSec must be at least 5 seconds")
-		}
-		if config.Duration > 0 && config.StopAfterSec >= config.Duration {
-			e.mu.Unlock()
-			return fmt.Errorf("stopAfterSec must be earlier than the test duration")
-		}
 	}
 	e.isRunning = true
+	// The previous start time must not leak into this test's warm-up, or the elapsed
+	// time jumps to the age of the last test and anything timed from it is wrong.
+	e.testStartedAt = time.Time{}
 	e.stats.SuccessfulRequests.Store(0)
 	e.stats.FailedRequests.Store(0)
 	e.stats.endpointStatsMu.Lock()

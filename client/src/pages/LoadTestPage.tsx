@@ -1,10 +1,18 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '../components/Button';
+import { AlgorithmComparison } from '../components/AlgorithmComparison';
+import { SeriesServerCharts } from '../components/SeriesServerCharts';
 import { ServerCharts } from '../components/ServerCharts';
+import { liveOutageBands } from '../components/liveOutages';
 import { ScenarioPhase, maxTestFileSizeKb, scenarioById, scenarioValues, trainingScenarios, trainingServerNames } from '../config/trainingScenarios';
 import { useLoadTest } from '../hooks/useLoadTest';
+import { SeriesStatus, TestMetrics } from '../types/loadTest';
 import './LoadTestPage.css';
+
+// Pause between two runs of a comparison; the load stand waits this long before the next algorithm.
+const seriesCooldownSec = 45;
+const comparisonScenario = trainingScenarios.find((item) => item.comparison) ?? trainingScenarios[0];
 
 export const LoadTestPage = () => {
   const {
@@ -15,6 +23,9 @@ export const LoadTestPage = () => {
     status,
     serverHistory,
     startTest,
+    startSeries,
+    series,
+    seriesResults,
     stopTest,
     setServerPower,
     pendingServer,
@@ -37,9 +48,28 @@ export const LoadTestPage = () => {
   const [phases, setPhases] = useState<ScenarioPhase[]>(initialScenario.phases);
   const [freezeModel, setFreezeModel] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  // Algorithms ticked for a comparison; until the first click every algorithm is in.
+  const [comparedAlgorithms, setComparedAlgorithms] = useState<string[] | null>(null);
+  // A frozen AM-PPO keeps the comparison fair: the model does not change between runs.
+  const [compareFreeze, setCompareFreeze] = useState(true);
   const scenario = scenarioById(scenarioId);
+  const seriesActive = series?.active ?? false;
+  const busy = status.isRunning || seriesActive;
+  const compareIds = (comparedAlgorithms ?? algorithms.map((algorithm) => algorithm.id))
+    .filter((id) => algorithms.some((algorithm) => algorithm.id === id));
   // A preset with a schedule replaces the random outages.
   const activeOutages = scenarioValues(scenario, quickPresetId).outages;
+
+  // After a reload in the middle of a series, show the page the series belongs to.
+  const openedSeries = useRef(false);
+  useEffect(() => {
+    if (seriesActive && !openedSeries.current) {
+      openedSeries.current = true;
+      applyScenario(comparisonScenario.id);
+    }
+    // applyScenario only sets state, so the first sight of an active series is enough.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seriesActive]);
 
   useEffect(() => {
     if (algorithms.length > 0 && !selectedAlgorithm) {
@@ -52,8 +82,16 @@ export const LoadTestPage = () => {
       setFormError('Нет доступных методов. Проверьте, что стенд нагрузки запущен.');
       return;
     }
-    if (!selectedAlgorithm) {
+    if (scenario.comparison && compareIds.length === 0) {
+      setFormError('Отметьте хотя бы один алгоритм для сравнения.');
+      return;
+    }
+    if (!scenario.comparison && !selectedAlgorithm) {
       setFormError('Выберите алгоритм балансировки.');
+      return;
+    }
+    if (scenario.comparison && duration < 1) {
+      setFormError('Для сравнения нужна длительность теста в секундах: 0 означает тест без конца.');
       return;
     }
     if (phases.length > 0) {
@@ -99,7 +137,7 @@ export const LoadTestPage = () => {
     }
 
     setFormError(null);
-    startTest({
+    const config = {
       concurrency: phases.length > 0 ? phases[0].concurrency : concurrency,
       duration: plannedDuration,
       endpoints: scenario.endpoints,
@@ -115,7 +153,18 @@ export const LoadTestPage = () => {
       outagePlan,
       waveIterations: phases.length > 0 ? waveIterations : undefined,
       phases: phases.length > 0 ? phases : undefined,
-    });
+    };
+    if (scenario.comparison) {
+      startSeries({
+        ...config,
+        algorithm: '',
+        algorithms: compareIds,
+        freezeModel: compareFreeze,
+        cooldownSec: seriesCooldownSec,
+      });
+      return;
+    }
+    startTest(config);
   };
 
   const applyValues = (values: ReturnType<typeof scenarioValues>) => {
@@ -146,6 +195,10 @@ export const LoadTestPage = () => {
     setWaveIterations(next.waveIterations);
     setPhases(next.phases);
     setFormError(null);
+  };
+
+  const toggleComparedAlgorithm = (id: string) => {
+    setComparedAlgorithms(compareIds.includes(id) ? compareIds.filter((item) => item !== id) : [...compareIds, id]);
   };
 
   const toggleOutageServer = (name: string) => {
@@ -191,7 +244,7 @@ export const LoadTestPage = () => {
                 type="button"
                 className={`load-scenario ${item.id === scenarioId ? 'load-scenario-active' : ''}`}
                 onClick={() => applyScenario(item.id)}
-                disabled={status.isRunning}
+                disabled={busy}
               >
                 <strong>{item.name}</strong>
                 <span>{item.summary}</span>
@@ -206,7 +259,7 @@ export const LoadTestPage = () => {
                     id={item.id}
                     type="checkbox"
                     checked={quickPresetId === item.id}
-                    disabled={status.isRunning}
+                    disabled={busy}
                     onChange={(event) => toggleQuickPreset(item.id, event.target.checked)}
                   />
                   {item.label}
@@ -224,7 +277,7 @@ export const LoadTestPage = () => {
                   label="Повторы круга"
                   min={0}
                   value={waveIterations}
-                  disabled={status.isRunning}
+                  disabled={busy}
                   onChange={setWaveIterations}
                 />
               </div>
@@ -241,7 +294,7 @@ export const LoadTestPage = () => {
                       label="Клиенты"
                       min={1}
                       value={phase.concurrency}
-                      disabled={status.isRunning}
+                      disabled={busy}
                       onChange={(value) => updatePhase(index, { concurrency: value })}
                     />
                     <NumberField
@@ -249,7 +302,7 @@ export const LoadTestPage = () => {
                       label="Секунды"
                       min={5}
                       value={phase.durationSec}
-                      disabled={status.isRunning}
+                      disabled={busy}
                       onChange={(value) => updatePhase(index, { durationSec: value })}
                     />
                     <NumberField
@@ -258,7 +311,7 @@ export const LoadTestPage = () => {
                       min={1}
                       max={maxTestFileSizeKb}
                       value={phase.fileSizeMinKb}
-                      disabled={status.isRunning}
+                      disabled={busy}
                       onChange={(value) => updatePhase(index, { fileSizeMinKb: value })}
                     />
                     <NumberField
@@ -267,7 +320,7 @@ export const LoadTestPage = () => {
                       min={1}
                       max={maxTestFileSizeKb}
                       value={phase.fileSizeMaxKb}
-                      disabled={status.isRunning}
+                      disabled={busy}
                       onChange={(value) => updatePhase(index, { fileSizeMaxKb: value })}
                     />
                   </div>
@@ -281,7 +334,7 @@ export const LoadTestPage = () => {
                 label="Одновременные клиенты"
                 min={1}
                 value={concurrency}
-                disabled={status.isRunning}
+                disabled={busy}
                 onChange={setConcurrency}
               />
               <NumberField
@@ -289,7 +342,7 @@ export const LoadTestPage = () => {
                 label="Длительность, секунды"
                 min={0}
                 value={duration}
-                disabled={status.isRunning}
+                disabled={busy}
                 onChange={setDuration}
               />
               <NumberField
@@ -298,7 +351,7 @@ export const LoadTestPage = () => {
                 min={1}
                 max={maxTestFileSizeKb}
                 value={fileSizeMinKb}
-                disabled={status.isRunning}
+                disabled={busy}
                 onChange={setFileSizeMinKb}
               />
               <NumberField
@@ -307,7 +360,7 @@ export const LoadTestPage = () => {
                 min={1}
                 max={maxTestFileSizeKb}
                 value={fileSizeMaxKb}
-                disabled={status.isRunning}
+                disabled={busy}
                 onChange={setFileSizeMaxKb}
               />
             </div>
@@ -317,7 +370,7 @@ export const LoadTestPage = () => {
               servers={outageServers}
               minSec={outageMinSec}
               maxSec={outageMaxSec}
-              disabled={status.isRunning}
+              disabled={busy}
               onToggle={toggleOutageServer}
               onMinChange={setOutageMinSec}
               onMaxChange={setOutageMaxSec}
@@ -327,44 +380,86 @@ export const LoadTestPage = () => {
             <p className="load-copy">0 секунд — тест идёт, пока не нажмёте Stop.</p>
           )}
 
-          <div className="load-fields">
-            <label className="load-field load-field-wide" htmlFor="algorithm">
-              Алгоритм балансировки
-              <select
-                id="algorithm"
-                value={selectedAlgorithm}
-                onChange={(event) => setSelectedAlgorithm(event.target.value)}
-                disabled={status.isRunning || isLoading}
-              >
-                {algorithms.map((algorithm) => (
-                  <option key={algorithm.id} value={algorithm.id}>{algorithm.name}</option>
-                ))}
-              </select>
-            </label>
-            {selectedAlgorithm === 'am_ppo' && (
-              <label className="load-check load-field-wide" htmlFor="freezeModel">
-                <input
-                  id="freezeModel"
-                  type="checkbox"
-                  checked={freezeModel}
-                  disabled={status.isRunning}
-                  onChange={(event) => setFreezeModel(event.target.checked)}
-                />
-                Не обучать модель во время теста
-              </label>
-            )}
-          </div>
-          {selectedAlgorithm === 'am_ppo' && freezeModel && (
-            <p className="load-copy">
-              Модель только балансирует: без шума исследования, без накопления переходов и обновления весов.
-            </p>
+          {scenario.comparison ? (
+            <>
+              <div className="load-fields">
+                <fieldset className="load-field load-field-wide" disabled={busy || isLoading}>
+                  <legend>Алгоритмы для сравнения</legend>
+                  <div className="load-checks">
+                    {algorithms.map((algorithm) => (
+                      <label className="load-check" key={algorithm.id}>
+                        <input
+                          type="checkbox"
+                          checked={compareIds.includes(algorithm.id)}
+                          onChange={() => toggleComparedAlgorithm(algorithm.id)}
+                        />
+                        {algorithm.name}
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+                {compareIds.includes('am_ppo') && (
+                  <label className="load-check load-field-wide" htmlFor="compareFreeze">
+                    <input
+                      id="compareFreeze"
+                      type="checkbox"
+                      checked={compareFreeze}
+                      disabled={busy}
+                      onChange={(event) => setCompareFreeze(event.target.checked)}
+                    />
+                    Не обучать модель AM-PPO во время сравнения
+                  </label>
+                )}
+              </div>
+              <p className="load-copy">
+                Алгоритмы идут по очереди, между прогонами пауза {seriesCooldownSec} секунд и проверка, что все серверы
+                работают. {compareIds.length > 0 && duration > 0
+                  ? `Всего примерно ${formatSeriesEstimate(compareIds.length, duration)}.`
+                  : ''}
+              </p>
+            </>
+          ) : (
+            <>
+              <div className="load-fields">
+                <label className="load-field load-field-wide" htmlFor="algorithm">
+                  Алгоритм балансировки
+                  <select
+                    id="algorithm"
+                    value={selectedAlgorithm}
+                    onChange={(event) => setSelectedAlgorithm(event.target.value)}
+                    disabled={busy || isLoading}
+                  >
+                    {algorithms.map((algorithm) => (
+                      <option key={algorithm.id} value={algorithm.id}>{algorithm.name}</option>
+                    ))}
+                  </select>
+                </label>
+                {selectedAlgorithm === 'am_ppo' && (
+                  <label className="load-check load-field-wide" htmlFor="freezeModel">
+                    <input
+                      id="freezeModel"
+                      type="checkbox"
+                      checked={freezeModel}
+                      disabled={busy}
+                      onChange={(event) => setFreezeModel(event.target.checked)}
+                    />
+                    Не обучать модель во время теста
+                  </label>
+                )}
+              </div>
+              {selectedAlgorithm === 'am_ppo' && freezeModel && (
+                <p className="load-copy">
+                  Модель только балансирует: без шума исследования, без накопления переходов и обновления весов.
+                </p>
+              )}
+            </>
           )}
 
           <div className="load-actions">
-            <Button onClick={handleStart} disabled={status.isRunning}>
-              {status.isRunning ? 'Running...' : 'Start'}
+            <Button onClick={handleStart} disabled={busy}>
+              {busy ? 'Running...' : 'Start'}
             </Button>
-            <Button variant="danger" onClick={stopTest} disabled={!status.isRunning}>
+            <Button variant="danger" onClick={stopTest} disabled={!busy}>
               Stop
             </Button>
           </div>
@@ -374,12 +469,31 @@ export const LoadTestPage = () => {
         <section className="load-card">
           <div className="load-card-title">
             <h2>Live status</h2>
-            <span className={`load-pill ${status.isRunning ? 'load-pill-up' : 'load-pill-idle'}`}>
-              {status.isRunning ? 'Running' : 'Stopped'}
+            <span className={`load-pill ${busy ? 'load-pill-up' : 'load-pill-idle'}`}>
+              {busy ? 'Running' : 'Stopped'}
             </span>
           </div>
           {error && <p className="load-notice load-notice-error">{error}</p>}
+          {scenario.comparison && series?.message && (
+            <p className="load-notice load-notice-error">{series.message}</p>
+          )}
           <div className="load-stats">
+            {scenario.comparison && series && (
+              <>
+                <div>
+                  <span>Алгоритм</span>
+                  <strong>{currentAlgorithmName(series, algorithms)}</strong>
+                </div>
+                <div>
+                  <span>Прогон</span>
+                  <strong>{series.current + 1} / {series.runs.length}</strong>
+                </div>
+                <div>
+                  <span>Этап</span>
+                  <strong>{seriesPhaseLabel(series)}</strong>
+                </div>
+              </>
+            )}
             <div>
               <span>Время</span>
               <strong>{formatElapsed(status)}</strong>
@@ -400,21 +514,13 @@ export const LoadTestPage = () => {
             </div>
           </div>
 
-          {status.stats.report && (
-            <div className="load-report">
-              <h3>Test report</h3>
-              <div className="load-report-grid">
-                <Metric label="RPS ↑" value={status.stats.report.rps.toFixed(2)} />
-                <Metric label="p50, ms ↓" value={status.stats.report.p50Millis.toFixed(2)} />
-                <Metric label="p95, ms ↓" value={(status.stats.report.p95Millis ?? 0).toFixed(2)} />
-                <Metric label="p99, ms ↓" value={status.stats.report.p99Millis.toFixed(2)} />
-                <Metric label="Errors, % ↓" value={`${status.stats.report.errorRatePercent.toFixed(2)}%`} />
-                <Metric
-                  label="CPU fairness ↑"
-                  value={status.stats.report.cpuFairnessAvailable ? status.stats.report.cpuFairnessIndex.toFixed(3) : 'N/A'}
-                />
-              </div>
-            </div>
+          {scenario.comparison ? (
+            // A finished run keeps its report, so each algorithm adds a block below the previous ones.
+            comparisonReports(series, algorithms, status.stats.report).map((item) => (
+              <ReportBlock key={item.key} title={`Test report · ${item.name}`} report={item.report} />
+            ))
+          ) : (
+            status.stats.report && <ReportBlock title="Test report" report={status.stats.report} />
           )}
         </section>
 
@@ -476,9 +582,25 @@ export const LoadTestPage = () => {
           <h2>Графики серверов</h2>
           <p className="load-copy">
             На каждом графике своя линия для каждого сервера. Интервал один для всех графиков, с началом теста история очищается.
+            {scenario.comparison ? ' Можно открыть сохранённые данные одного из прошедших алгоритмов.' : ''}
           </p>
-          <ServerCharts history={serverHistory} />
+          {scenario.comparison ? (
+            <SeriesServerCharts series={series} algorithms={algorithms} liveHistory={serverHistory} />
+          ) : (
+            <ServerCharts history={serverHistory} outages={liveOutageBands(serverHistory)} />
+          )}
         </section>
+
+        {scenario.comparison && (
+          <section className="load-card">
+            <h2>Графики сравнения алгоритмов</h2>
+            <p className="load-copy">
+              Каждый алгоритм — своя линия на общих графиках. Кнопки включают и выключают уже прошедшие алгоритмы,
+              линия идущего прогона растёт по мере теста. Данные хранит стенд нагрузки, после обновления страницы они остаются.
+            </p>
+            <AlgorithmComparison series={seriesResults} algorithms={algorithms} />
+          </section>
+        )}
 
         <section className="load-card">
           <h2>Per endpoint</h2>
@@ -638,6 +760,77 @@ function formatWaveProgress(stats: { waveIteration?: number; waveIndex?: number;
   const iteration = stats.waveIteration || 0;
   const limit = (stats.waveIterations || 0) > 0 ? String(stats.waveIterations) : '∞';
   return `${iteration} / ${limit} · волна ${stats.waveIndex || 0}/${stats.waveCount || 0}`;
+}
+
+function currentAlgorithmName(series: SeriesStatus, algorithms: { id: string; name: string }[]) {
+  const id = series.runs[series.current]?.algorithm ?? '';
+  return algorithms.find((algorithm) => algorithm.id === id)?.name ?? (id || '—');
+}
+
+function seriesPhaseLabel(series: SeriesStatus) {
+  switch (series.phase) {
+    case 'preparing':
+      return 'Подготовка';
+    case 'running':
+      return 'Идёт тест';
+    case 'cooldown':
+      return `Пауза ${series.cooldownLeftSec} с`;
+    case 'finished':
+      return 'Серия завершена';
+    case 'stopped':
+      return 'Серия остановлена';
+    default:
+      return 'Ошибка серии';
+  }
+}
+
+// Runs plus the pauses between them, rounded to minutes; warm-up adds a few seconds per run.
+function formatSeriesEstimate(runs: number, durationSec: number) {
+  const warmupSec = 10;
+  const totalSec = runs * (durationSec + warmupSec) + (runs - 1) * seriesCooldownSec;
+  const minutes = Math.round(totalSec / 60);
+  return minutes >= 60 ? `${Math.floor(minutes / 60)} ч ${minutes % 60} мин` : `${minutes} мин`;
+}
+
+// Reports of the runs of a series in the order they ran: finished runs from the series
+// itself, the run in progress from the live status.
+function comparisonReports(
+  series: SeriesStatus | null,
+  algorithms: { id: string; name: string }[],
+  liveReport: TestMetrics | null | undefined,
+) {
+  if (!series) {
+    return [];
+  }
+  const items: { key: string; name: string; report: TestMetrics }[] = [];
+  series.runs.forEach((run, index) => {
+    const name = algorithms.find((algorithm) => algorithm.id === run.algorithm)?.name ?? run.algorithm;
+    const live = index === series.current && run.state === 'running' ? liveReport : null;
+    const report = run.report ?? live;
+    if (report) {
+      items.push({ key: run.algorithm, name, report });
+    }
+  });
+  return items;
+}
+
+function ReportBlock({ title, report }: { title: string; report: TestMetrics }) {
+  return (
+    <div className="load-report">
+      <h3>{title}</h3>
+      <div className="load-report-grid">
+        <Metric label="RPS ↑" value={report.rps.toFixed(2)} />
+        <Metric label="p50, ms ↓" value={report.p50Millis.toFixed(2)} />
+        <Metric label="p95, ms ↓" value={(report.p95Millis ?? 0).toFixed(2)} />
+        <Metric label="p99, ms ↓" value={report.p99Millis.toFixed(2)} />
+        <Metric label="Errors, % ↓" value={`${report.errorRatePercent.toFixed(2)}%`} />
+        <Metric
+          label="CPU fairness ↑"
+          value={report.cpuFairnessAvailable ? report.cpuFairnessIndex.toFixed(3) : 'N/A'}
+        />
+      </div>
+    </div>
+  );
 }
 
 function Metric({ label, value }: { label: string; value: string }) {

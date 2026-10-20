@@ -5,6 +5,7 @@ import (
 	"load-stand/engine"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -62,6 +63,30 @@ func (h *Handler) HandleAlgorithms(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(configuration)
 }
 
+// HandleSeries returns the last series with every sample of every run.
+func (h *Handler) HandleSeries(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(h.engine.SeriesSnapshot(true))
+}
+
+// HandleSeriesServers returns the per-server samples of one finished run:
+// /api/series/runs/{index}/servers.
+func (h *Handler) HandleSeriesServers(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/series/runs/"), "/"), "/")
+	index, err := strconv.Atoi(parts[0])
+	if len(parts) != 2 || parts[1] != "servers" || err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	history, err := h.engine.SeriesServerHistory(index)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(history)
+}
+
 func (h *Handler) HandleServerPower(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -109,6 +134,7 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 					"type": "status",
 					"payload": map[string]interface{}{
 						"isRunning": isRunning,
+						"series":    h.engine.SeriesSnapshot(false),
 						"stats": jsonStats{
 							SuccessfulRequests: stats.SuccessfulRequests,
 							FailedRequests:     stats.FailedRequests,
@@ -151,14 +177,29 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 		switch cmd.Action {
 		case "start":
+			if h.engine.SeriesActive() {
+				h.sendError(conn, "a series is running; stop it first")
+				continue
+			}
 			if err := h.engine.StartTest(cmd.Payload); err != nil {
 				conn.WriteJSON(map[string]interface{}{
 					"type":    "error",
 					"payload": map[string]string{"message": err.Error()},
 				})
 			}
+		case "startSeries":
+			if err := h.engine.StartSeries(cmd.Payload); err != nil {
+				h.sendError(conn, err.Error())
+			}
 		case "stop":
-			h.engine.StopTest()
+			h.engine.StopAll()
 		}
 	}
+}
+
+func (h *Handler) sendError(conn *websocket.Conn, message string) {
+	conn.WriteJSON(map[string]interface{}{
+		"type":    "error",
+		"payload": map[string]string{"message": message},
+	})
 }
