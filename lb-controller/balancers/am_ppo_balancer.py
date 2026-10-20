@@ -11,6 +11,7 @@ from config import (
     AM_PPO_GAMMA,
     AM_PPO_LEARNING_RATE,
     AM_PPO_MIN_TRAINING_RPS,
+    AM_PPO_NETWORK_CREDIT,
     AM_PPO_MODEL_PATH,
     AM_PPO_REWARD_BALANCE_WEIGHT,
     AM_PPO_REWARD_CHURN_WEIGHT,
@@ -25,7 +26,7 @@ from balancers.base import Balancer, LoadDecision
 from rl.am_ppo_model import AMPPORLModel, PpoAction
 from rl.metrics_source import MetricsSource
 from rl.types import ClusterState, disk_busyness
-from rl.weights import capacity_eds_weights, equal_eds_weights, step_toward_even_cpu
+from rl.weights import capacity_eds_weights, equal_eds_weights, network_step_deltas, step_toward_even_cpu
 
 logger = logging.getLogger("lb-controller.am_ppo")
 
@@ -45,6 +46,7 @@ class AMPPOBalancer(Balancer):
         disk_weight: float = AM_PPO_REWARD_DISK_WEIGHT,
         churn_weight: float = AM_PPO_REWARD_CHURN_WEIGHT,
         action_hold_seconds: float = AM_PPO_ACTION_HOLD_SEC,
+        network_credit: bool = AM_PPO_NETWORK_CREDIT,
         time_fn: Callable[[], float] | None = None,
     ) -> None:
         if not backends:
@@ -69,6 +71,7 @@ class AMPPOBalancer(Balancer):
         self._spread_weight = spread_weight
         self._disk_weight = disk_weight
         self._churn_weight = churn_weight
+        self._network_credit = network_credit
         self._action_hold_seconds = action_hold_seconds
         self._time_fn = time_fn or time.monotonic
         self._hold_until = 0.0
@@ -111,9 +114,30 @@ class AMPPOBalancer(Balancer):
                 state.step_index,
             )
             self._previous_transition = None
-            # The next sample would continue from a different state, so the
-            # open rollout would stitch two unrelated trajectories.
+            # The next sample would continue from a different state. Cut the
+            # trajectory here but keep what was collected: scrape gaps come every
+            # half minute under load and would otherwise starve the rollout.
+            self._model.end_segment()
+            held = {
+                backend.host: self._current_weights.get(backend.host, 0) if server.is_healthy else 0
+                for backend, server in zip(self._backends, state.servers)
+            }
+            self._current_weights = held
+            self._hold_until = now + self._action_hold_seconds
+            return LoadDecision(weights=held)
+
+        if not self._is_trainable(state):
+            # With no traffic there is nothing to learn from and no CPU gap to close,
+            # yet the network's constant bias kept stepping the weights until one server
+            # held almost everything. Hold them, so a load that starts again meets the
+            # split it left.
+            self._previous_transition = None
             self._model.discard_rollout()
+            logger.debug(
+                "AM-PPO idle, weights held step=%d rps=%.3f",
+                state.step_index,
+                state.cluster_request_rate_rps,
+            )
             held = {
                 backend.host: self._current_weights.get(backend.host, 0) if server.is_healthy else 0
                 for backend, server in zip(self._backends, state.servers)
@@ -132,10 +156,15 @@ class AMPPOBalancer(Balancer):
                     previous_state,
                     weights_before_action,
                     weights_after_action,
+                    network_shift=self._network_shift(previous_action),
                 )
                 reward = sum(terms.values())
                 self._model.observe_transition(previous_state, previous_action, reward, state)
-                cpu_percent = [round(server.cpu_utilization * 100) for server in previous_state.servers]
+                # A stopped server has no CPU reading at all; that must not stop the loop.
+                cpu_percent = [
+                    round(server.cpu_utilization * 100) if math.isfinite(server.cpu_utilization) else None
+                    for server in previous_state.servers
+                ]
                 # Latency and errors are one number for the whole cluster, so they
                 # cannot tell the policy which server to favor. Log only.
                 logger.info(
@@ -149,13 +178,6 @@ class AMPPOBalancer(Balancer):
                     state.cluster_latency_p99_seconds * 1000.0,
                     _cluster_error_rate(state) * 100.0,
                     cpu_percent,
-                )
-            elif not self._is_trainable(state):
-                self._model.discard_rollout()
-                logger.debug(
-                    "AM-PPO skipped idle transition step=%d rps=%.3f",
-                    state.step_index,
-                    state.cluster_request_rate_rps,
                 )
 
         action = self._model.act(state)
@@ -212,27 +234,47 @@ class AMPPOBalancer(Balancer):
             ).values()
         )
 
+    def _network_shift(self, action: PpoAction) -> dict[str, float] | None:
+        """Weight points the network itself asked for, by host. None when credit is off."""
+        if not self._network_credit:
+            return None
+        deltas = network_step_deltas(action.raw_logits, action.alive_mask)
+        return {backend.host: delta for backend, delta in zip(self._backends, deltas)}
+
     def _reward_terms(
         self,
         outcome_state: ClusterState,
         decision_state: ClusterState,
         previous_weights: dict[str, int],
         action_weights: dict[str, int],
+        network_shift: dict[str, float] | None = None,
     ) -> dict[str, float]:
         # Scored on the CPUs the action actually saw. Weight moved onto a hotter
         # server is a penalty; weight moved onto a colder one is a reward.
         # Equal CPUs, or no shift, score zero.
-        balance_penalty = _weight_on_hotter_servers(decision_state, action_weights, previous_weights)
+        #
+        # The shift is the network's own step when network_shift is given. The CPU
+        # controller adds 30% on top, which the network did not choose and which
+        # only adds variance to its credit. The score then depends on the state the
+        # network saw and the logits it chose, not on the noise of the next reading.
+        cpus = [_finite_fraction(server.cpu_utilization) for server in decision_state.servers]
+        disks = [disk_busyness(server) for server in decision_state.servers]
+        healthy = [server.is_healthy for server in decision_state.servers]
+        if network_shift is not None:
+            shifts = [network_shift.get(server.host, 0.0) / self._weight_total for server in decision_state.servers]
+            balance_penalty = _shift_covariance(cpus, healthy, shifts)
+            disk_penalty = _shift_covariance(disks, healthy, shifts)
+        else:
+            balance_penalty = _weight_on_hotter_servers(decision_state, action_weights, previous_weights)
+            disk_penalty = _weight_covariance(
+                disks,
+                healthy,
+                [action_weights.get(server.host, 0) for server in decision_state.servers],
+                [previous_weights.get(server.host, 0) for server in decision_state.servers],
+            )
         # The cluster after the action. Equal CPUs score zero even when the
         # weights did not move, which the balance term cannot see.
         spread_penalty = _cpu_spread(outcome_state)
-        # Same shape as the balance term: weight moved onto a busier disk is a penalty.
-        disk_penalty = _weight_covariance(
-            [disk_busyness(server) for server in decision_state.servers],
-            [server.is_healthy for server in decision_state.servers],
-            [action_weights.get(server.host, 0) for server in decision_state.servers],
-            [previous_weights.get(server.host, 0) for server in decision_state.servers],
-        )
         churn = sum(
             abs(action_weights.get(backend.host, 0) - previous_weights.get(backend.host, 0))
             for backend in self._backends
@@ -265,6 +307,31 @@ def _cluster_error_rate(state: ClusterState) -> float:
         max(server.request_rate_rps, 0.0) * min(max(server.error_rate, 0.0), 1.0)
         for server in state.servers
     ) / request_rate
+
+
+def _finite_fraction(value: float) -> float | None:
+    return min(max(value, 0.0), 1.0) if math.isfinite(value) else None
+
+
+def _shift_covariance(
+    signals: list[float | None],
+    healthy: list[bool],
+    shifts: list[float],
+) -> float:
+    """Covariance of a weight shift (as a share of the total) with a signal.
+
+    Positive when the shift moves weight toward the higher signal. A stopped
+    server and a missing reading are left out. Zero for fewer than two servers.
+    """
+    rows = [
+        (signal, shift)
+        for signal, is_healthy, shift in zip(signals, healthy, shifts)
+        if is_healthy and signal is not None and math.isfinite(signal)
+    ]
+    if len(rows) < 2:
+        return 0.0
+    mean_signal = sum(signal for signal, _ in rows) / len(rows)
+    return sum(shift * (signal - mean_signal) for signal, shift in rows)
 
 
 def _cpu_spread(state: ClusterState) -> float:

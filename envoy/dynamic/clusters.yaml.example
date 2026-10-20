@@ -4,7 +4,7 @@ version_info: lb-controller-round_robin
 resources:
 - '@type': type.googleapis.com/envoy.config.cluster.v3.Cluster
   name: grpc_backend
-  connect_timeout: 5s
+  connect_timeout: 1s
   type: EDS
   http2_protocol_options: {}
   lb_policy: ROUND_ROBIN
@@ -14,6 +14,7 @@ resources:
         path: /etc/envoy/dynamic/endpoints.yaml
       resource_api_version: V3
     service_name: grpc_backend
+  ignore_health_on_host_removal: true
   track_cluster_stats:
     per_endpoint_stats: true
   health_checks:

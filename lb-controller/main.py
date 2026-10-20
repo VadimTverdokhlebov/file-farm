@@ -50,7 +50,14 @@ def main() -> None:
             write_cds_file(CDS_PATH, policy, eds_path=EDS_PATH)
             logger.info("Set Envoy lb_policy=%s in %s", policy, CDS_PATH)
             written_policy = policy
-        decision = runtime.select()
+        try:
+            decision = runtime.select()
+        except Exception:
+            # One bad sample must not restart the controller: a restart drops the
+            # weights back to the hardware split and loses the model state.
+            logger.exception("Balancer failed; keeping the current weights")
+            time.sleep(UPDATE_INTERVAL_SEC)
+            continue
         set_endpoint_weights(decision.weights)
         write_eds_file(EDS_PATH, BACKENDS, decision.weights, resolve_hosts=RESOLVE_BACKEND_HOSTS)
         logger.info("Updated EDS weights: %s", decision.weights)

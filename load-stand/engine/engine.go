@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -62,18 +63,29 @@ type TestConfig struct {
 	Algorithm   string   `json:"algorithm"`
 	// FreezeModel stops the AM-PPO policy from learning for this test. The
 	// model keeps balancing, but acts on its mean and does not update.
-	FreezeModel    bool        `json:"freezeModel"`
-	FileSizeKB     int         `json:"fileSizeKb"`
-	FileSizeMinKB  int         `json:"fileSizeMinKb"`
-	FileSizeMaxKB  int         `json:"fileSizeMaxKb"`
-	WarmupFiles    int         `json:"warmupFiles"`
-	StopServer     string      `json:"stopServer"`
-	StopAfterSec   int         `json:"stopAfterSec"`
-	OutageServers  []string    `json:"outageServers,omitempty"`
-	OutageMinSec   int         `json:"outageMinSec"`
-	OutageMaxSec   int         `json:"outageMaxSec"`
-	Phases         []LoadPhase `json:"phases,omitempty"`
-	WaveIterations *int        `json:"waveIterations,omitempty"`
+	FreezeModel   bool     `json:"freezeModel"`
+	FileSizeKB    int      `json:"fileSizeKb"`
+	FileSizeMinKB int      `json:"fileSizeMinKb"`
+	FileSizeMaxKB int      `json:"fileSizeMaxKb"`
+	WarmupFiles   int      `json:"warmupFiles"`
+	StopServer    string   `json:"stopServer"`
+	StopAfterSec  int      `json:"stopAfterSec"`
+	OutageServers []string `json:"outageServers,omitempty"`
+	OutageMinSec  int      `json:"outageMinSec"`
+	OutageMaxSec  int      `json:"outageMaxSec"`
+	// OutagePlan stops and starts servers at fixed seconds of the test. It cannot be
+	// combined with the random outages or StopServer.
+	OutagePlan     []PlannedOutage `json:"outagePlan,omitempty"`
+	Phases         []LoadPhase     `json:"phases,omitempty"`
+	WaveIterations *int            `json:"waveIterations,omitempty"`
+}
+
+// PlannedOutage is one server down from StopAtSec to StartAtSec, counted from the
+// start of the load.
+type PlannedOutage struct {
+	Server     string `json:"server"`
+	StopAtSec  int    `json:"stopAtSec"`
+	StartAtSec int    `json:"startAtSec"`
 }
 
 type LoadPhase struct {
@@ -292,7 +304,11 @@ func (e *Engine) StartTest(rawConfig TestConfig) error {
 		e.mu.Unlock()
 		return err
 	}
-	if config.StopServer != "" && len(config.OutageServers) == 0 {
+	if err := validateOutagePlan(config); err != nil {
+		e.mu.Unlock()
+		return err
+	}
+	if config.StopServer != "" && len(config.OutageServers) == 0 && len(config.OutagePlan) == 0 {
 		if !allowedServerName(config.StopServer) {
 			e.mu.Unlock()
 			return fmt.Errorf("stopServer must be one of file-farm-server-1..4")
@@ -423,7 +439,10 @@ func (e *Engine) StartTest(rawConfig TestConfig) error {
 		}()
 	}
 
-	if len(config.OutageServers) > 0 {
+	if len(config.OutagePlan) > 0 {
+		plan := append([]PlannedOutage(nil), config.OutagePlan...)
+		go e.runOutagePlan(ctx, e.testStartedAt, plan)
+	} else if len(config.OutageServers) > 0 {
 		servers := append([]string(nil), config.OutageServers...)
 		go e.runServerOutages(ctx, servers, config.OutageMinSec, config.OutageMaxSec)
 	} else if config.StopServer != "" {
@@ -638,6 +657,90 @@ func validateOutages(config TestConfig) error {
 		return fmt.Errorf("outageMinSec must be earlier than the test duration")
 	}
 	return nil
+}
+
+// validateOutagePlan checks a fixed schedule of outages.
+func validateOutagePlan(config TestConfig) error {
+	if len(config.OutagePlan) == 0 {
+		return nil
+	}
+	if len(config.OutageServers) > 0 || config.StopServer != "" {
+		return fmt.Errorf("outagePlan cannot be combined with outageServers or stopServer")
+	}
+	for index, outage := range config.OutagePlan {
+		if !allowedServerName(outage.Server) {
+			return fmt.Errorf("outage %d: server %q must be one of file-farm-server-1..4", index+1, outage.Server)
+		}
+		if outage.StopAtSec < 5 {
+			return fmt.Errorf("outage %d: stopAtSec must be at least 5 seconds", index+1)
+		}
+		if outage.StartAtSec <= outage.StopAtSec {
+			return fmt.Errorf("outage %d: startAtSec must be later than stopAtSec", index+1)
+		}
+		if config.Duration > 0 && outage.StopAtSec >= config.Duration {
+			return fmt.Errorf("outage %d: stopAtSec must be earlier than the test duration", index+1)
+		}
+		for _, other := range config.OutagePlan[:index] {
+			if other.Server == outage.Server && outage.StopAtSec < other.StartAtSec && other.StopAtSec < outage.StartAtSec {
+				return fmt.Errorf("outage %d: %s is already down during that time", index+1, outage.Server)
+			}
+		}
+	}
+	return nil
+}
+
+type outageEvent struct {
+	atSec  int
+	server string
+	stop   bool
+}
+
+// outageEvents turns the plan into stop and start events in time order. A start
+// comes before a stop at the same second, so a server is never stopped twice.
+func outageEvents(plan []PlannedOutage) []outageEvent {
+	events := make([]outageEvent, 0, len(plan)*2)
+	for _, outage := range plan {
+		events = append(events,
+			outageEvent{atSec: outage.StopAtSec, server: outage.Server, stop: true},
+			outageEvent{atSec: outage.StartAtSec, server: outage.Server, stop: false},
+		)
+	}
+	sort.SliceStable(events, func(i int, j int) bool {
+		if events[i].atSec != events[j].atSec {
+			return events[i].atSec < events[j].atSec
+		}
+		return !events[i].stop && events[j].stop
+	})
+	return events
+}
+
+// runOutagePlan stops and starts servers at the planned seconds after startedAt.
+func (e *Engine) runOutagePlan(ctx context.Context, startedAt time.Time, plan []PlannedOutage) {
+	defer e.restoreStoppedServers()
+	for _, event := range outageEvents(plan) {
+		due := startedAt.Add(time.Duration(event.atSec) * time.Second)
+		if !waitOutage(ctx, time.Until(due)) || ctx.Err() != nil {
+			return
+		}
+		action := "start"
+		if event.stop {
+			action = "stop"
+		}
+		powerCtx, powerCancel := context.WithTimeout(context.Background(), 20*time.Second)
+		err := e.SetServerPower(powerCtx, event.server, action)
+		powerCancel()
+		if err != nil {
+			log.Printf("Failed to %s %s at %ds of the scenario: %v", action, event.server, event.atSec, err)
+			continue
+		}
+		if event.stop {
+			e.markServerForRestore(event.server)
+			log.Printf("Scenario stopped %s at %ds", event.server, event.atSec)
+		} else {
+			e.unmarkServerForRestore(event.server)
+			log.Printf("Scenario started %s again at %ds", event.server, event.atSec)
+		}
+	}
 }
 
 func outageDelay(rng *rand.Rand, minSec int, maxSec int) time.Duration {

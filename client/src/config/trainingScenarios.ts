@@ -28,7 +28,14 @@ export type ScenarioPhase = {
   fileSizeMaxKb: number;
 };
 
-// Fixed load for watching how the model learns: one file size, endless run.
+// A server taken down at stopAtSec of the test and started again at startAtSec.
+export type ScheduledOutage = {
+  server: string;
+  stopAtSec: number;
+  startAtSec: number;
+};
+
+// Fixed load for watching how the model learns: one file size, a fixed duration.
 export type QuickPreset = {
   id: string;
   label: string;
@@ -36,6 +43,8 @@ export type QuickPreset = {
   duration: number;
   fileSizeMinKb: number;
   fileSizeMaxKb: number;
+  // Servers that fall out and return on a fixed schedule during this load.
+  outages?: ScheduledOutage[];
 };
 
 export type TrainingScenario = {
@@ -110,6 +119,38 @@ export const trainingScenarios: TrainingScenario[] = [
     summary: 'Все методы. Случайный сервер из выбранных останавливается и через случайное время из диапазона запускается снова.',
     weakness:
       'Least request считает мёртвый сервер свободным и шлёт ему больше запросов. EMA принимает отсутствие задержки за быстрый ответ. Round robin и weighted round robin держат старую долю, пока не сработает проверка здоровья, и не готовятся к тому, что следующим упадёт уже другой сервер.',
+    quickPresets: [
+      {
+        id: 'dropout-85-90',
+        label: 'Средняя загрузка 85–90% от максимальной мощности: 28 клиентов, файл 512 КБ, 10 минут. Сервер 3 выпадает на 5-й минуте и включается на 6-й',
+        concurrency: 28,
+        duration: 600,
+        fileSizeMinKb: 512,
+        fileSizeMaxKb: 512,
+        outages: [{ server: 'file-farm-server-3', stopAtSec: 300, startAtSec: 360 }],
+      },
+      {
+        id: 'dropout-55-60',
+        label: 'Средняя загрузка 55–60% от максимальной мощности: 6 клиентов, файл 128 КБ, 10 минут. Сервер 1 выпадает на 3-й минуте, сервер 3 на 5-й; сервер 1 включается на 6-й минуте, сервер 3 на 8-й',
+        concurrency: 6,
+        duration: 600,
+        fileSizeMinKb: 128,
+        fileSizeMaxKb: 128,
+        outages: [
+          { server: 'file-farm-server-1', stopAtSec: 180, startAtSec: 360 },
+          { server: 'file-farm-server-3', stopAtSec: 300, startAtSec: 480 },
+        ],
+      },
+      {
+        id: 'dropout-45-50',
+        label: 'Средняя загрузка 45–50% от максимальной мощности: 3 клиента, файл 64 КБ, 10 минут. Сервер 4 выпадает на 4-й минуте и включается на 7-й',
+        concurrency: 3,
+        duration: 600,
+        fileSizeMinKb: 64,
+        fileSizeMaxKb: 64,
+        outages: [{ server: 'file-farm-server-4', stopAtSec: 240, startAtSec: 420 }],
+      },
+    ],
     endpoints: allEndpoints,
     concurrency: 30,
     duration: 180,
@@ -181,6 +222,7 @@ export function scenarioValues(scenario: TrainingScenario, quickPresetId: string
     duration: preset?.duration ?? scenario.duration,
     fileSizeMinKb: preset?.fileSizeMinKb ?? scenario.fileSizeMinKb,
     fileSizeMaxKb: preset?.fileSizeMaxKb ?? scenario.fileSizeMaxKb,
+    outages: preset?.outages,
   };
 }
 

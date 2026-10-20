@@ -38,6 +38,8 @@ export const LoadTestPage = () => {
   const [freezeModel, setFreezeModel] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const scenario = scenarioById(scenarioId);
+  // A preset with a schedule replaces the random outages.
+  const activeOutages = scenarioValues(scenario, quickPresetId).outages;
 
   useEffect(() => {
     if (algorithms.length > 0 && !selectedAlgorithm) {
@@ -76,7 +78,16 @@ export const LoadTestPage = () => {
       setFormError('Число повторов круга не может быть отрицательным. 0 означает без конца.');
       return;
     }
-    if (scenario.randomOutages) {
+    const outagePlan = scenarioValues(scenario, quickPresetId).outages;
+    if (outagePlan && plannedDuration > 0) {
+      // The schedule is in seconds of the test, so a shorter run would never reach it.
+      const unreachable = outagePlan.find((outage) => outage.stopAtSec >= plannedDuration);
+      if (unreachable) {
+        setFormError(`Длительность теста ${plannedDuration} с меньше времени остановки сервера по расписанию. Верните 600 секунд или снимите отметку.`);
+        return;
+      }
+    }
+    if (scenario.randomOutages && !outagePlan) {
       if (outageServers.length === 0) {
         setFormError('Отметьте хотя бы один сервер, который может остановиться.');
         return;
@@ -98,9 +109,10 @@ export const LoadTestPage = () => {
       fileSizeMinKb: phases.length > 0 ? phases[0].fileSizeMinKb : fileSizeMinKb,
       fileSizeMaxKb: phases.length > 0 ? phases[0].fileSizeMaxKb : fileSizeMaxKb,
       warmupFiles: scenario.warmupFiles,
-      outageServers: scenario.randomOutages ? outageServers : undefined,
-      outageMinSec: scenario.randomOutages ? outageMinSec : undefined,
-      outageMaxSec: scenario.randomOutages ? outageMaxSec : undefined,
+      outageServers: scenario.randomOutages && !outagePlan ? outageServers : undefined,
+      outageMinSec: scenario.randomOutages && !outagePlan ? outageMinSec : undefined,
+      outageMaxSec: scenario.randomOutages && !outagePlan ? outageMaxSec : undefined,
+      outagePlan,
       waveIterations: phases.length > 0 ? waveIterations : undefined,
       phases: phases.length > 0 ? phases : undefined,
     });
@@ -123,8 +135,11 @@ export const LoadTestPage = () => {
 
   const applyScenario = (id: string) => {
     const next = scenarioById(id);
+    // Like on first load, the first preset of a scenario is on by default.
+    const nextPresetId = next.quickPresets?.[0]?.id ?? null;
     setScenarioId(next.id);
-    applyValues(scenarioValues(next, quickPresetId));
+    setQuickPresetId(nextPresetId);
+    applyValues(scenarioValues(next, nextPresetId));
     setOutageServers(next.outageServers);
     setOutageMinSec(next.outageMinSec);
     setOutageMaxSec(next.outageMaxSec);
@@ -297,7 +312,7 @@ export const LoadTestPage = () => {
               />
             </div>
           )}
-          {scenario.randomOutages && (
+          {scenario.randomOutages && !activeOutages && (
             <OutageFields
               servers={outageServers}
               minSec={outageMinSec}

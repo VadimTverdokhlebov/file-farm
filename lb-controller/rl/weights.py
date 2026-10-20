@@ -101,9 +101,14 @@ def _apply_capped_step(
     floors: dict[str, int] = {}
     ceilings: dict[str, int] = {}
     hosts: list[str] = []
+    # A server that stopped leaves its weight behind. Spread it over the live ones in
+    # proportion to what they hold, so the step starts from a full, sensible split
+    # instead of piling the freed share on one server.
+    live_total = sum(max(current.get(backends[index].host, 0), 0) for index in healthy)
+    scale = weight_total / live_total if live_total > 0 else 1.0
     for index, delta in zip(healthy, deltas):
         host = backends[index].host
-        base = max(current.get(host, 0), 0)
+        base = int(round(max(current.get(host, 0), 0) * scale))
         floor = max(1, base - max_step)
         ceiling = base + max_step
         weights[host] = min(max(int(round(base + delta)), floor), ceiling)
@@ -117,6 +122,31 @@ def _apply_capped_step(
 
 # Share of the capped step that comes from the network. The CPU gap fills the rest.
 _NETWORK_STEP_SHARE = 0.70
+
+
+def network_step_deltas(
+    logits: tuple[float, ...],
+    alive_mask: tuple[bool, ...],
+    *,
+    max_step: int = 20,
+) -> list[float]:
+    """Weight points the network alone asks for, per backend. Zero for a stopped one.
+
+    Only the gap between servers counts, so the mean logit of the live ones is
+    removed first. The same number feeds the step and the reward.
+    """
+    healthy = [index for index, is_alive in enumerate(alive_mask) if is_alive]
+    deltas = [0.0] * len(alive_mask)
+    if not healthy:
+        return deltas
+    values = [
+        logits[index] if index < len(logits) and math.isfinite(logits[index]) else 0.0
+        for index in healthy
+    ]
+    mean_value = sum(values) / len(values)
+    for index, value in zip(healthy, values):
+        deltas[index] = math.tanh(value - mean_value) * max_step
+    return deltas
 
 
 def step_toward_even_cpu(
@@ -161,19 +191,12 @@ def step_toward_even_cpu(
         for index in healthy
     ]
     mean_cpu = sum(cpus) / len(cpus)
-    healthy_logits = [
-        logits[index] if index < len(logits) and math.isfinite(logits[index]) else 0.0
-        for index in healthy
-    ]
+    network_deltas = network_step_deltas(logits, alive_mask, max_step=max_step)
     deltas: list[float] = []
     for index, cpu in zip(healthy, cpus):
-        logit = logits[index] if index < len(logits) and math.isfinite(logits[index]) else 0.0
         cpu_raw = cpu_gain * (mean_cpu - cpu) * weight_total
         cpu_delta = min(max(cpu_raw, -float(max_step)), float(max_step))
-        # Same removal as the actor: only the gap between servers moves weight.
-        centered_logit = logit - (sum(healthy_logits) / len(healthy_logits))
-        network_delta = math.tanh(centered_logit) * max_step
-        raw = network_share * network_delta + (1.0 - network_share) * cpu_delta
+        raw = network_share * network_deltas[index] + (1.0 - network_share) * cpu_delta
         deltas.append(min(max(raw, -float(max_step)), float(max_step)))
 
     return _apply_capped_step(backends, current, healthy, deltas, weights, weight_total, max_step)

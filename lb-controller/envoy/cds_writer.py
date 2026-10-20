@@ -16,7 +16,9 @@ def build_cluster_discovery(lb_policy: str, *, eds_path: str = EDS_PATH) -> dict
     cluster = {
         "@type": "type.googleapis.com/envoy.config.cluster.v3.Cluster",
         "name": CLUSTER_NAME,
-        "connect_timeout": "5s",
+        # A request sent to a dead host waits this long for its connection. With a
+        # closed-loop load every client ends up waiting on it, so keep it short.
+        "connect_timeout": "1s",
         "type": "EDS",
         "http2_protocol_options": {},
         "lb_policy": lb_policy,
@@ -27,6 +29,10 @@ def build_cluster_discovery(lb_policy: str, *, eds_path: str = EDS_PATH) -> dict
             },
             "service_name": CLUSTER_NAME,
         },
+        # Without this Envoy keeps a host that left EDS until its active health check
+        # fails, about 10 s. The controller drops a stopped server at once, so Envoy
+        # must follow, or every client queues behind the dead host.
+        "ignore_health_on_host_removal": True,
         "track_cluster_stats": {"per_endpoint_stats": True},
         "health_checks": [
             {

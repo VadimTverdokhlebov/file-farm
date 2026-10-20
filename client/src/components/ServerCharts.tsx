@@ -15,20 +15,30 @@ const METRICS: { key: MetricKey; label: string; unit: string; fixedMax: number |
   { key: 'mem', label: 'Память', unit: 'МБ', fixedMax: null },
 ];
 
+const SECOND = 1000;
+const MINUTE = 60 * SECOND;
+
+// A ruler under every chart: a short tick every minorMs, a long tick with a clock
+// label every majorMs. Ticks sit on round clock times, so they slide left as the
+// window moves instead of the labels jumping to the edge of the data.
 const RANGES = [
-  { label: '3 мин', ms: 3 * 60 * 1000 },
-  { label: '10 мин', ms: 10 * 60 * 1000 },
-  { label: '30 мин', ms: 30 * 60 * 1000 },
-  { label: '1 час', ms: 60 * 60 * 1000 },
+  { label: '3 мин', ms: 3 * MINUTE, minorMs: 10 * SECOND, majorMs: 30 * SECOND },
+  { label: '10 мин', ms: 10 * MINUTE, minorMs: 30 * SECOND, majorMs: MINUTE },
+  { label: '30 мин', ms: 30 * MINUTE, minorMs: MINUTE, majorMs: 5 * MINUTE },
+  { label: '1 час', ms: 60 * MINUTE, minorMs: 5 * MINUTE, majorMs: 10 * MINUTE },
 ];
+
+type Range = (typeof RANGES)[number];
 
 const VIEW_W = 640;
 const VIEW_H = 206;
 const PAD = { top: 10, right: 8, bottom: 28, left: 42 };
-const TIME_TICKS = 4;
+const MINOR_TICK = 3;
+const MAJOR_TICK = 7;
 
 export function ServerCharts({ history }: { history: ServerHistoryPoint[] }) {
-  const [rangeMs, setRangeMs] = useState(RANGES[0].ms);
+  const [range, setRange] = useState<Range>(RANGES[0]);
+  const rangeMs = range.ms;
   const names = serverNames(history);
   const windowEnd = history.length > 0 ? history[history.length - 1].at : Date.now();
   const windowStart = windowEnd - rangeMs;
@@ -37,14 +47,14 @@ export function ServerCharts({ history }: { history: ServerHistoryPoint[] }) {
   return (
     <>
       <div className="load-chart-range" role="group" aria-label="Интервал графиков">
-        {RANGES.map((range) => (
+        {RANGES.map((item) => (
           <button
-            key={range.ms}
+            key={item.ms}
             type="button"
-            aria-pressed={range.ms === rangeMs}
-            onClick={() => setRangeMs(range.ms)}
+            aria-pressed={item.ms === rangeMs}
+            onClick={() => setRange(item)}
           >
-            {range.label}
+            {item.label}
           </button>
         ))}
       </div>
@@ -78,7 +88,7 @@ export function ServerCharts({ history }: { history: ServerHistoryPoint[] }) {
                 metric={metric.key}
                 fixedMax={metric.fixedMax}
                 windowStart={windowStart}
-                windowMs={rangeMs}
+                range={range}
               />
             </article>
           ))}
@@ -94,15 +104,16 @@ function MetricChart({
   metric,
   fixedMax,
   windowStart,
-  windowMs,
+  range,
 }: {
   history: ServerHistoryPoint[];
   names: string[];
   metric: MetricKey;
   fixedMax: number | null;
   windowStart: number;
-  windowMs: number;
+  range: Range;
 }) {
+  const windowMs = range.ms;
   const plotW = VIEW_W - PAD.left - PAD.right;
   const plotH = VIEW_H - PAD.top - PAD.bottom;
   const rawSeries = metric === 'totalRps'
@@ -131,10 +142,21 @@ function MetricChart({
           </g>
         );
       })}
-      {timeTicks(windowStart, windowMs, plotW).map((tick, slot) => (
-        <text key={slot} x={tick.x} y={VIEW_H - 6} className="load-chart-tick" textAnchor={tick.anchor}>
-          {tick.label}
-        </text>
+      {timeTicks(windowStart, range, plotW).map((tick) => (
+        <g key={tick.at}>
+          <line
+            x1={tick.x}
+            x2={tick.x}
+            y1={PAD.top + plotH}
+            y2={PAD.top + plotH + (tick.label ? MAJOR_TICK : MINOR_TICK)}
+            className="load-chart-ruler"
+          />
+          {tick.label && (
+            <text x={tick.x} y={VIEW_H - 6} className="load-chart-tick" textAnchor="middle">
+              {tick.label}
+            </text>
+          )}
+        </g>
       ))}
       {series.map((runs, index) => (
         runs.map((run, segment) => (
@@ -235,20 +257,29 @@ function soften(run: PlotPoint[], tip: PlotPoint | null): PlotPoint[] {
   return smoothed;
 }
 
+// Ruler marks inside the window, on round clock times. Marks that fall on a multiple
+// of majorMs carry a label, the rest are plain ticks. A label that would run past
+// the edge of the chart is left out.
 function timeTicks(
   windowStart: number,
-  windowMs: number,
+  range: Range,
   plotW: number,
-): { x: number; label: string; anchor: 'start' | 'middle' | 'end' }[] {
-  return Array.from({ length: TIME_TICKS }, (_, slot) => {
-    const ratio = slot / (TIME_TICKS - 1);
-    const anchor = slot === 0 ? 'start' : slot === TIME_TICKS - 1 ? 'end' : 'middle';
-    return {
-      x: PAD.left + ratio * plotW,
-      label: formatClock(windowStart + ratio * windowMs),
-      anchor,
-    };
-  });
+): { at: number; x: number; label: string | null }[] {
+  const windowEnd = windowStart + range.ms;
+  // Round in local time, so a tick at 10:05 is a tick at 10:05 on the wall clock.
+  const offset = new Date(windowStart).getTimezoneOffset() * MINUTE;
+  const first = Math.ceil((windowStart - offset) / range.minorMs) * range.minorMs + offset;
+  const withSeconds = range.majorMs % MINUTE !== 0;
+  const halfLabel = withSeconds ? 30 : 20;
+  const ticks: { at: number; x: number; label: string | null }[] = [];
+
+  for (let at = first; at <= windowEnd; at += range.minorMs) {
+    const x = xOf(at, windowStart, range.ms, plotW);
+    const isMajor = Math.round((at - offset) / range.minorMs) * range.minorMs % range.majorMs === 0;
+    const fits = x - halfLabel >= 0 && x + halfLabel <= VIEW_W;
+    ticks.push({ at, x, label: isMajor && fits ? formatTickClock(at, withSeconds) : null });
+  }
+  return ticks;
 }
 
 function xOf(at: number, windowStart: number, windowMs: number, plotW: number): number {
@@ -359,11 +390,11 @@ function formatNumber(value: number): string {
   return value >= 100 ? value.toFixed(0) : value.toFixed(1);
 }
 
-function formatClock(timestamp: number): string {
+function formatTickClock(timestamp: number, withSeconds: boolean): string {
   return new Date(timestamp).toLocaleTimeString('ru-RU', {
     hour: '2-digit',
     minute: '2-digit',
-    second: '2-digit',
+    ...(withSeconds ? { second: '2-digit' } : {}),
   });
 }
 

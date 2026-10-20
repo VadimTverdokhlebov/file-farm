@@ -342,6 +342,11 @@ fieldset.load-field legend {
   stroke-width: 1;
 }
 
+.load-chart-ruler {
+  stroke: #8794a3;
+  stroke-width: 1;
+}
+
 .load-chart-tick {
   fill: #5c6b7a;
   font-size: 11px;

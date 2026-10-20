@@ -18,6 +18,7 @@ from balancers.weighted_round_robin import WeightedRoundRobinBalancer
 from rl.weights import (
     capacity_eds_weights,
     logits_to_eds_weights,
+    network_step_deltas,
     step_toward_even_cpu,
 )
 
@@ -378,6 +379,66 @@ class AMPPOTests(unittest.TestCase):
 
         self.assertEqual(model._rollout, [])
 
+    def test_stopped_server_gets_no_weight_and_the_others_keep_balancing(self) -> None:
+        alive = make_state(cpu=(0.5, 0.6))
+        # A stopped container has no CPU reading, only a down health flag.
+        down = make_state(healthy=(True, False), cpu=(0.5, float("nan")))
+        balancer = AMPPOBalancer(
+            BACKENDS,
+            metrics_source=ScriptedMetricsSource([alive, down, down, down, alive, alive, alive]),
+            model=make_model(rollout_size=8),
+            weight_total=1000,
+            action_hold_seconds=0.0,
+        )
+
+        weights = [balancer.select().weights for _ in range(7)]
+
+        self.assertEqual(weights[0]["server-2"] > 0, True)
+        for stopped in weights[1:4]:
+            self.assertEqual(stopped["server-2"], 0)
+            self.assertEqual(stopped["server-1"], 1000)
+        # Server-1 held 500 of 1000 and is now the only live server: it gets all of it,
+        # and with three servers the freed share is split by what each one held.
+        # Once the server is back it gets weight again, a capped step at a time.
+        self.assertGreater(weights[-1]["server-2"], 0)
+
+    def test_freed_weight_is_shared_in_proportion_to_what_the_others_hold(self) -> None:
+        backends = tuple(Backend(name=f"server-{i}", host=f"server-{i}", port=1) for i in range(1, 5))
+        current = {"server-1": 125, "server-2": 250, "server-3": 125, "server-4": 500}
+
+        stepped = step_toward_even_cpu(
+            backends,
+            current,
+            (0.5, float("nan"), 0.5, 0.5),
+            (True, False, True, True),
+            (0.0, 0.0, 0.0, 0.0),
+            weight_total=1000,
+            max_step=20,
+        )
+
+        self.assertEqual(stepped["server-2"], 0)
+        self.assertEqual(sum(stepped.values()), 1000)
+        # 125 : 125 : 500 of 750 is 167 : 167 : 667; no server takes the whole share.
+        self.assertAlmostEqual(stepped["server-1"], 167, delta=1)
+        self.assertAlmostEqual(stepped["server-3"], 167, delta=1)
+        self.assertAlmostEqual(stepped["server-4"], 667, delta=1)
+
+    def test_idle_cluster_keeps_the_weights_it_had(self) -> None:
+        idle = make_state(request_rates=(0.0, 0.0))
+        balancer = AMPPOBalancer(
+            BACKENDS,
+            metrics_source=ScriptedMetricsSource([idle] * 30),
+            model=make_model(rollout_size=8),
+            min_training_rps=1.0,
+            action_hold_seconds=0.0,
+        )
+
+        first = balancer.select().weights
+        for _ in range(29):
+            last = balancer.select().weights
+
+        self.assertEqual(first, last)
+
     def test_weight_step_cannot_jump_onto_a_cooler_server(self) -> None:
         # 40% CPU with weight 70 must not become 350 in one decision.
         stepped = step_toward_even_cpu(
@@ -694,6 +755,60 @@ class AMPPOTests(unittest.TestCase):
         self.assertGreater(shed, 0.0)
         self.assertAlmostEqual(shed, -added)
 
+    def test_network_step_deltas_drop_the_shared_level_and_skip_stopped_servers(self) -> None:
+        deltas = network_step_deltas((3.0, 3.0, 3.0), (True, True, True))
+        self.assertTrue(all(abs(delta) < 1e-9 for delta in deltas))
+
+        deltas = network_step_deltas((2.0, 0.0, 99.0), (True, True, False))
+        self.assertGreater(deltas[0], 0.0)
+        self.assertAlmostEqual(deltas[0], -deltas[1])
+        self.assertEqual(deltas[2], 0.0)
+        self.assertLessEqual(max(abs(delta) for delta in deltas), 20.0)
+
+    def test_network_credit_ignores_the_cpu_controller_share_of_the_step(self) -> None:
+        def build(credit: bool) -> AMPPOBalancer:
+            return AMPPOBalancer(
+                BACKENDS,
+                metrics_source=StubMetricsSource(
+                    BACKENDS,
+                    cpu_limits=(1.0, 1.0),
+                    memory_limits_bytes=(1_073_741_824.0, 1_073_741_824.0),
+                ),
+                model=make_model(),
+                weight_total=1000,
+                balance_weight=10.0,
+                spread_weight=0.0,
+                disk_weight=0.0,
+                churn_weight=0.0,
+                network_credit=credit,
+            )
+
+        state = make_state(cpu=(0.9, 0.3), latency_p99=0.0)
+        before = {"server-1": 500, "server-2": 500}
+        # The applied weights moved toward the cool server (the controller's doing).
+        after = {"server-1": 486, "server-2": 514}
+
+        # The network asked to put weight on the hot server and gets blamed for it.
+        wrong = build(True)._reward_terms(state, state, before, after, {"server-1": 10.0, "server-2": -10.0})
+        right = build(True)._reward_terms(state, state, before, after, {"server-1": -10.0, "server-2": 10.0})
+        self.assertLess(wrong["balance"], 0.0)
+        self.assertGreater(right["balance"], 0.0)
+        self.assertAlmostEqual(wrong["balance"], -right["balance"])
+
+        # Without credit the applied weights decide, whatever the network asked for.
+        applied = build(False)._reward_terms(state, state, before, after)
+        self.assertGreater(applied["balance"], 0.0)
+
+    def test_exploration_std_stays_inside_the_bound_after_updates(self) -> None:
+        model = make_model(rollout_size=4)
+        state = make_state(cpu=(0.9, 0.3))
+        for index in range(40):
+            action = model.act(state)
+            model.observe_transition(state, action, 5.0 if index % 2 else -5.0, state)
+            std = float(model._log_std.detach().exp())
+            self.assertLessEqual(std, 0.1 + 1e-6)
+            self.assertGreaterEqual(std, math.exp(-3.0) - 1e-6)
+
     def test_update_runs_several_epochs_and_reports_policy_movement(self) -> None:
         model = AMPPORLModel(
             learning_rate=1e-3,
@@ -764,7 +879,7 @@ class AMPPOTests(unittest.TestCase):
 
         self.assertGreater(logit_gap(), before + 0.1)
 
-    def test_missing_cpu_sample_discards_the_open_rollout(self) -> None:
+    def test_missing_cpu_sample_cuts_the_trajectory_but_keeps_the_rollout(self) -> None:
         clock = {"now": 0.0}
         source = ScriptedMetricsSource([
             make_state(cpu=(0.5, 0.6)),
@@ -787,7 +902,21 @@ class AMPPOTests(unittest.TestCase):
         clock["now"] = 4.0
         balancer.select()
 
+        self.assertEqual(len(model._rollout), 1)
+        self.assertTrue(model._rollout[0].ends_segment)
+
+    def test_rollout_with_a_trajectory_gap_still_updates(self) -> None:
+        model = make_model(rollout_size=4)
+        state = make_state(cpu=(0.9, 0.3))
+        before = [parameter.detach().clone() for parameter in model._actor_score.parameters()]
+        for index in range(4):
+            model.observe_transition(state, model.act(state), 1.0 if index % 2 else -1.0, state)
+            if index == 1:
+                model.end_segment()
+
         self.assertEqual(model._rollout, [])
+        after = list(model._actor_score.parameters())
+        self.assertTrue(any(not torch.equal(a, b) for a, b in zip(before, after)))
 
     def test_frozen_model_does_not_learn_and_acts_on_the_mean(self) -> None:
         path = "/tmp/am_ppo_frozen.pt"

@@ -1,7 +1,7 @@
 import logging
 import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import torch
 from torch import nn
@@ -15,11 +15,14 @@ logger = logging.getLogger("lb-controller.am_ppo")
 # cpu, disk, rps, active requests, health, cpu-limit share, memory-limit share.
 _FEATURES_PER_SERVER = 7
 
-# Exploration std range is exp(-3)..exp(-0.5) = 0.05..0.61. The start sits
-# strictly inside so the std receives gradient and can shrink as the policy learns.
+# Exploration std range is exp(-3)..0.10 (0.05..0.10). Every sampled step moves
+# weight by up to 20 * tanh(noise), so a wide std alone jitters the weights by
+# several points per decision. In simulation a std of 0.31 cost about 20% of the
+# CPU balance of the same policy at 0.1, and 0.1 cost almost nothing against none.
+# The start sits strictly inside so the std receives gradient and can shrink.
 _LOG_STD_MIN = -3.0
-_LOG_STD_MAX = -0.5
-_LOG_STD_INIT = -1.0
+_LOG_STD_MAX = math.log(0.10)
+_LOG_STD_INIT = -2.4
 
 # Reward statistics behave like an average over about this many samples. A
 # larger window adapts too slowly when the reward scale changes between builds.
@@ -46,6 +49,8 @@ class _Transition:
     log_probability: float
     reward: float
     next_state: tuple[float, ...]
+    # True when the next transition does not follow this one in time.
+    ends_segment: bool = False
 
 
 class AMPPORLModel(nn.Module):
@@ -245,6 +250,15 @@ class AMPPORLModel(nn.Module):
         if len(self._rollout) >= self._rollout_size:
             self._update_policy()
 
+    def end_segment(self) -> None:
+        """Mark a gap in the trajectory without losing the transitions collected so far.
+
+        Advantages are not carried across the gap. Each transition still bootstraps
+        from its own next state, so the samples stay valid.
+        """
+        if self._rollout and not self._rollout[-1].ends_segment:
+            self._rollout[-1] = replace(self._rollout[-1], ends_segment=True)
+
     def discard_rollout(self) -> None:
         # Idle gaps must not be stitched into the next loaded trajectory.
         self._rollout.clear()
@@ -285,6 +299,9 @@ class AMPPORLModel(nn.Module):
             temporal_difference = (
                 reward_values[index] + self._gamma * next_value_list[index] - value_list[index]
             )
+            if rollout[index].ends_segment:
+                # The next transition is not a continuation of this one.
+                generalized_advantage = 0.0
             generalized_advantage = (
                 temporal_difference + self._gamma * self._gae_lambda * generalized_advantage
             )
@@ -352,6 +369,10 @@ class AMPPORLModel(nn.Module):
             loss.backward()
             nn.utils.clip_grad_norm_(self.parameters(), max_norm=0.5)
             self._optimizer.step()
+            with torch.no_grad():
+                # clamp() has zero gradient outside its range, so a std pushed past
+                # the bound by one step could never come back. Keep it inside.
+                self._log_std.clamp_(_LOG_STD_MIN, _LOG_STD_MAX)
 
         self._save_weights()
         self._update_count += 1

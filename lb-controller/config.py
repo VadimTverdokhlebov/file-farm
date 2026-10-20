@@ -66,20 +66,26 @@ METRICS_SOURCE = os.environ.get("METRICS_SOURCE", "prometheus")
 DQN_WEIGHT_TOTAL = int(os.environ.get("DQN_WEIGHT_TOTAL", "1000"))
 EMA_ALPHA = float(os.environ.get("EMA_ALPHA", "0.2"))
 
-AM_PPO_LEARNING_RATE = float(os.environ.get("AM_PPO_LEARNING_RATE", "0.001"))
+# Low on purpose. The reward is noisy and a rollout of 16 steps gave updates that
+# drifted the weights away from the biggest server. A larger rollout and a smaller
+# step averaged that out in simulation; a higher rate made it worse.
+AM_PPO_LEARNING_RATE = float(os.environ.get("AM_PPO_LEARNING_RATE", "0.0003"))
 AM_PPO_GAMMA = float(os.environ.get("AM_PPO_GAMMA", "0.9"))
 AM_PPO_GAE_LAMBDA = float(os.environ.get("AM_PPO_GAE_LAMBDA", "0.95"))
 AM_PPO_CLIP_EPSILON = float(os.environ.get("AM_PPO_CLIP_EPSILON", "0.2"))
 AM_PPO_UPDATE_EPOCHS = int(os.environ.get("AM_PPO_UPDATE_EPOCHS", "4"))
 # Start with the policy learning. A test can freeze it through POST /api/learning.
 AM_PPO_LEARNING_ENABLED = _parse_bool(os.environ.get("AM_PPO_LEARNING_ENABLED", ""), default=True)
-AM_PPO_ROLLOUT_SIZE = int(os.environ.get("AM_PPO_ROLLOUT_SIZE", "16"))
+AM_PPO_ROLLOUT_SIZE = int(os.environ.get("AM_PPO_ROLLOUT_SIZE", "64"))
 AM_PPO_VALUE_COEFFICIENT = float(os.environ.get("AM_PPO_VALUE_COEFFICIENT", "0.5"))
 AM_PPO_ENTROPY_COEFFICIENT = float(os.environ.get("AM_PPO_ENTROPY_COEFFICIENT", "0.001"))
 AM_PPO_REWARD_BALANCE_WEIGHT = float(os.environ.get("AM_PPO_REWARD_BALANCE_WEIGHT", "100.0"))
 # Mean absolute CPU gap among live servers. Below the balance weight so a
 # wrong step still matters, but an even cluster scores better than a split.
 AM_PPO_REWARD_SPREAD_WEIGHT = float(os.environ.get("AM_PPO_REWARD_SPREAD_WEIGHT", "20.0"))
+# Score balance and disk on the network's own step, not on the step the CPU
+# controller then mixes in. Off restores the earlier reward.
+AM_PPO_NETWORK_CREDIT = _parse_bool(os.environ.get("AM_PPO_NETWORK_CREDIT", ""), default=True)
 AM_PPO_REWARD_DISK_WEIGHT = float(os.environ.get("AM_PPO_REWARD_DISK_WEIGHT", "10.0"))
 AM_PPO_MIN_TRAINING_RPS = float(os.environ.get("AM_PPO_MIN_TRAINING_RPS", "1.0"))
 AM_PPO_REWARD_CHURN_WEIGHT = float(os.environ.get("AM_PPO_REWARD_CHURN_WEIGHT", "0.5"))

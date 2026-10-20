@@ -66,6 +66,11 @@ export interface TestConfig {
   outageServers?: string[];
   outageMinSec?: number;
   outageMaxSec?: number;
+  outagePlan?: {
+    server: string;
+    stopAtSec: number;
+    startAtSec: number;
+  }[];
   waveIterations?: number;
   phases?: {
     concurrency: number;

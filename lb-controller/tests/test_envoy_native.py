@@ -65,6 +65,14 @@ class EnvoyNativeTests(unittest.TestCase):
             self.assertEqual(round_robin[key], least_request[key])
         self.assertEqual(round_robin["name"], "grpc_backend")
 
+    def test_a_host_that_left_eds_is_dropped_at_once(self) -> None:
+        cluster = build_cluster_discovery("ROUND_ROBIN")["resources"][0]
+
+        # Otherwise Envoy keeps a dead host until two health checks fail, and every
+        # closed-loop client queues behind it.
+        self.assertTrue(cluster["ignore_health_on_host_removal"])
+        self.assertEqual(cluster["connect_timeout"], "1s")
+
     def test_unknown_policy_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             build_cluster_discovery("MAGLEV")
