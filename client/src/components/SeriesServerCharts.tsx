@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { fetchLoadStandJson } from '../config/loadStand';
-import { BalancerAlgorithm, SeriesRun, SeriesStatus, ServerHistoryPoint } from '../types/loadTest';
-import { ServerCharts, ServerOutageBand } from './ServerCharts';
+import { BalancerAlgorithm, SeriesRun, SeriesStatus, ServerHistoryPoint, SeriesOutage } from '../types/loadTest';
+import { testClockOutages } from './chartMath';
+import { ServerCharts } from './ServerCharts';
 import { liveOutageBands } from './liveOutages';
 
 // Per-server charts for a comparison: the live view, or the saved data of exactly
@@ -10,22 +11,32 @@ export function SeriesServerCharts({
   series,
   algorithms,
   liveHistory,
+  manualOutages,
 }: {
   series: SeriesStatus | null;
   algorithms: BalancerAlgorithm[];
   liveHistory: ServerHistoryPoint[];
+  manualOutages?: SeriesOutage[];
 }) {
-  // null is the live view, a number is the index of a saved run.
-  const [selected, setSelected] = useState<number | null>(null);
+  // undefined follows Now (live idle or the run in progress), a number is a saved run.
+  const [picked, setPicked] = useState<number | null | undefined>(undefined);
   const nameOf = (id: string) => algorithms.find((item) => item.id === id)?.name ?? id;
   const runs = (series?.runs ?? []).map((run, index) => ({ run, index }));
   const isSaved = (run: SeriesRun) => run.state === 'done' || run.state === 'stopped';
+  const live = runs.some(({ run }) => run.state === 'running');
+  const selected = picked !== undefined ? picked : null;
   const chosen = runs.find(({ run, index }) => index === selected && isSaved(run));
+
+  useEffect(() => {
+    if (live) {
+      setPicked(undefined);
+    }
+  }, [live]);
 
   return (
     <>
       <div className="load-chart-range" role="group" aria-label="Server chart data">
-        <button type="button" aria-pressed={!chosen} onClick={() => setSelected(null)}>
+        <button type="button" aria-pressed={!chosen} onClick={() => setPicked(null)}>
           Now
         </button>
         {runs.map(({ run, index }) => (
@@ -35,7 +46,7 @@ export function SeriesServerCharts({
             aria-pressed={chosen?.index === index}
             // Only a finished run has saved data; the one in progress is the live view.
             disabled={!isSaved(run)}
-            onClick={() => setSelected(index)}
+            onClick={() => setPicked(index)}
           >
             {nameOf(run.algorithm)}
             {runLabel(run)}
@@ -49,10 +60,12 @@ export function SeriesServerCharts({
           run={chosen.run}
           index={chosen.index}
           durationSec={series.durationSec}
-          outages={outageBands(series, chosen.run)}
+          originMs={chosen.run.startedAtMs}
+          scheduledOutages={testClockOutages(series.outages, manualOutages ?? [])}
+          liveFallback={liveHistory}
         />
       ) : (
-        <ServerCharts history={liveHistory} outages={liveOutageBands(liveHistory)} />
+        <LiveServerCharts series={series} liveHistory={liveHistory} manualOutages={manualOutages ?? []} />
       )}
     </>
   );
@@ -66,36 +79,55 @@ function runLabel(run: SeriesRun): string {
       return ' · pending';
     case 'failed':
       return ' · failed';
+    case 'stopped':
+      return ' · stopped';
     default:
       return '';
   }
 }
 
-// The planned outages of a series as time spans on the clock of one run.
-function outageBands(series: SeriesStatus, run: SeriesRun): ServerOutageBand[] {
-  if (!run.startedAtMs) {
-    return [];
-  }
-  const startedAt = run.startedAtMs;
-  return (series.outages ?? []).map((outage) => ({
-    server: outage.server,
-    fromMs: startedAt + outage.stopAtSec * 1000,
-    // A server still down when the run ends is started again at that moment.
-    // An open-ended run (duration 0) has no end to cut the outage at.
-    toMs: startedAt + (series.durationSec > 0 ? Math.min(outage.startAtSec, series.durationSec) : outage.startAtSec) * 1000,
-  }));
+function LiveServerCharts({
+  series,
+  liveHistory,
+  manualOutages,
+}: {
+  series: SeriesStatus | null;
+  liveHistory: ServerHistoryPoint[];
+  manualOutages: SeriesOutage[];
+}) {
+  const run = series?.runs.find((item) => item.state === 'running' && item.startedAtMs != null);
+  const originMs = run?.startedAtMs;
+  const history = originMs != null
+    ? liveHistory.filter((point) => point.at >= originMs)
+    : liveHistory;
+  const planned = series?.outages ?? [];
+  // Only a live run uses the test clock. Idle Now draws from the left on
+  // wall time; the saved run still holds the strips from the test.
+  const onTestClock = originMs != null;
+  return (
+    <ServerCharts
+      history={history}
+      originMs={originMs}
+      scheduledOutages={onTestClock ? testClockOutages(planned, manualOutages) : []}
+      outages={onTestClock ? [] : liveOutageBands(history)}
+    />
+  );
 }
 
 function SavedRunCharts({
   run,
   index,
   durationSec,
-  outages,
+  originMs,
+  scheduledOutages,
+  liveFallback,
 }: {
   run: SeriesRun;
   index: number;
   durationSec: number;
-  outages: ServerOutageBand[];
+  originMs?: number;
+  scheduledOutages?: SeriesStatus['outages'];
+  liveFallback: ServerHistoryPoint[];
 }) {
   const [history, setHistory] = useState<ServerHistoryPoint[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -118,22 +150,28 @@ function SavedRunCharts({
     };
   }, [index]);
 
+  const fallback = originMs != null
+    ? liveFallback.filter((point) => point.at >= originMs)
+    : liveFallback;
+  const display = history ?? fallback;
+
   if (error) {
     return <p className="load-notice load-notice-error">{error}</p>;
   }
-  if (!history) {
-    return <p className="load-empty">Loading saved data…</p>;
-  }
-  if (history.length === 0) {
-    return <p className="load-empty">This run has no saved server data.</p>;
+  if (display.length === 0) {
+    return <p className="load-empty">{history ? 'This run has no saved server data.' : 'Loading saved data…'}</p>;
   }
   return (
     <>
       <p className="load-copy">
-        Saved run data{run.startedAtMs ? `, started at ${formatStart(run.startedAtMs)}` : ''}. The axis shows the time
-        when the run took place.
+        Saved run data{run.startedAtMs ? `, started at ${formatStart(run.startedAtMs)}` : ''}.
       </p>
-      <ServerCharts history={history} initialRangeMs={rangeMsFor(durationSec * 1000)} outages={outages} />
+      <ServerCharts
+        history={display}
+        initialRangeMs={rangeMsFor(durationSec * 1000)}
+        originMs={originMs}
+        scheduledOutages={scheduledOutages}
+      />
     </>
   );
 }

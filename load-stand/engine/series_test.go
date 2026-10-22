@@ -143,7 +143,7 @@ func TestSeriesCooldownRecordsTheWait(t *testing.T) {
 	}
 }
 
-func TestSeriesServerHistoryOnlyForFinishedRuns(t *testing.T) {
+func TestSeriesServerHistoryServesARunningRun(t *testing.T) {
 	engine := &Engine{series: &SeriesStatus{Runs: []SeriesRun{
 		{Algorithm: "a", State: RunDone, servers: []ServerHistoryPoint{{At: 1}}},
 		{Algorithm: "b", State: RunRunning, servers: []ServerHistoryPoint{{At: 2}}},
@@ -152,8 +152,9 @@ func TestSeriesServerHistoryOnlyForFinishedRuns(t *testing.T) {
 	if err != nil || len(history) != 1 || history[0].At != 1 {
 		t.Fatalf("finished run: %v, %v", history, err)
 	}
-	if _, err := engine.SeriesServerHistory(1); err == nil {
-		t.Fatal("a running run must not be served")
+	running, err := engine.SeriesServerHistory(1)
+	if err != nil || len(running) != 1 || running[0].At != 2 {
+		t.Fatalf("running run: %v, %v", running, err)
 	}
 	if _, err := engine.SeriesServerHistory(5); err == nil {
 		t.Fatal("an unknown run must be an error")
@@ -165,8 +166,9 @@ func TestSeriesServerHistoryOnlyForFinishedRuns(t *testing.T) {
 
 func TestWithPowerStateMarksDownServersStopped(t *testing.T) {
 	servers := []ServerStatus{
-		{Name: "a", Status: "up", EDS: 250},
+		{Name: "a", Status: "up", Running: true, EDS: 250},
 		{Name: "b", Status: "down", EDS: 250, RPS: 20},
+		{Name: "c", Status: "up", Running: false, EDS: 180},
 	}
 	copied := withPowerState(servers)
 	if !copied[0].Running || copied[0].EDS != 250 {
@@ -174,6 +176,9 @@ func TestWithPowerStateMarksDownServersStopped(t *testing.T) {
 	}
 	if copied[1].Running || copied[1].EDS != 0 || copied[1].RPS != 0 {
 		t.Fatalf("stopped server not marked: %+v", copied[1])
+	}
+	if copied[2].Running || copied[2].Status != "down" || copied[2].EDS != 0 {
+		t.Fatalf("a Docker stop must stay down even if Prometheus still says up: %+v", copied[2])
 	}
 	if servers[1].EDS != 250 {
 		t.Fatal("the input must not be modified")
@@ -205,5 +210,36 @@ func TestSeriesElapsedStopsAtTheEnd(t *testing.T) {
 	}
 	if got := seriesElapsedSec(start, start.Add(60*time.Second)); got != 60 {
 		t.Fatalf("a finished series counts up to its end, got %d", got)
+	}
+}
+
+func TestClearResultsDropsAFinishedSeries(t *testing.T) {
+	engine := &Engine{}
+	engine.series = &SeriesStatus{
+		Active: false,
+		Phase:  SeriesStopped,
+		Runs:   []SeriesRun{{Algorithm: "am_ppo", State: RunStopped}},
+	}
+	engine.stats.Report = &TestMetrics{RPS: 12}
+
+	if err := engine.ClearResults(); err != nil {
+		t.Fatalf("clearing a finished series: %v", err)
+	}
+	if engine.SeriesSnapshot(true) != nil {
+		t.Fatal("the last series must be gone")
+	}
+	if engine.stats.Report != nil {
+		t.Fatal("the last report must be gone")
+	}
+}
+
+func TestClearResultsKeepsARunningSeries(t *testing.T) {
+	engine := &Engine{}
+	engine.series = &SeriesStatus{Active: true, Phase: SeriesRunning}
+	if err := engine.ClearResults(); err == nil {
+		t.Fatal("clearing while a series is running must be refused")
+	}
+	if engine.series == nil || !engine.series.Active {
+		t.Fatal("the running series must stay")
 	}
 }

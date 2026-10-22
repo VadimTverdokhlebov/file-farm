@@ -123,8 +123,8 @@ func (e *Engine) SeriesSnapshot(withSamples bool) *SeriesStatus {
 	return &snapshot
 }
 
-// SeriesServerHistory returns the per-server samples of a finished run. A run that is
-// still going is not served, so what the client gets never changes.
+// SeriesServerHistory returns the per-server samples of a run, including one that
+// is still going, so a reloaded page can draw the same charts again.
 func (e *Engine) SeriesServerHistory(index int) ([]ServerHistoryPoint, error) {
 	e.seriesMu.Lock()
 	defer e.seriesMu.Unlock()
@@ -132,9 +132,6 @@ func (e *Engine) SeriesServerHistory(index int) ([]ServerHistoryPoint, error) {
 		return nil, fmt.Errorf("no such run")
 	}
 	run := e.series.Runs[index]
-	if run.State != RunDone && run.State != RunStopped {
-		return nil, fmt.Errorf("the run has not finished")
-	}
 	return append([]ServerHistoryPoint(nil), run.servers...), nil
 }
 
@@ -142,6 +139,30 @@ func (e *Engine) SeriesActive() bool {
 	e.seriesMu.Lock()
 	defer e.seriesMu.Unlock()
 	return e.series != nil && e.series.Active
+}
+
+// ClearResults drops a finished series and the last report, the same wipe a
+// new Start does before it records anything. A run that is still going stays.
+func (e *Engine) ClearResults() error {
+	e.mu.Lock()
+	running := e.isRunning
+	e.mu.Unlock()
+	e.seriesMu.Lock()
+	active := e.series != nil && e.series.Active
+	if running || active {
+		e.seriesMu.Unlock()
+		return fmt.Errorf("a series is running; stop it first")
+	}
+	e.series = nil
+	e.seriesCancel = nil
+	e.seriesMu.Unlock()
+
+	e.mu.Lock()
+	e.resetLoadStats()
+	e.stats.Report = nil
+	e.testStartedAt = time.Time{}
+	e.mu.Unlock()
+	return nil
 }
 
 // StopAll ends a series, if one is going, together with the test inside it.
@@ -627,12 +648,14 @@ func runPointTime(startedAt time.Time, second int) int64 {
 }
 
 // withPowerState copies the servers and fills in what the charts read as "stopped":
-// a server that Prometheus sees as down is not running and carries no weight.
+// a Docker stop or a Prometheus down both count, and Prometheus "up" must not
+// revive a container that is already marked not running.
 func withPowerState(servers []ServerStatus) []ServerStatus {
 	copied := append([]ServerStatus(nil), servers...)
 	for index := range copied {
-		copied[index].Running = copied[index].Status == "up"
-		if !copied[index].Running {
+		if copied[index].Status != "up" || !copied[index].Running {
+			copied[index].Running = false
+			copied[index].Status = "down"
 			clearDownServer(&copied[index])
 		}
 	}

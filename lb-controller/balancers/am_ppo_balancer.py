@@ -181,7 +181,11 @@ class AMPPOBalancer(Balancer):
                 )
 
         action = self._model.act(state)
-        if self._previous_transition is None:
+        returning = any(
+            bool(alive) and self._current_weights.get(backend.host, 0) <= 0
+            for backend, alive in zip(self._backends, action.alive_mask)
+        )
+        if self._previous_transition is None and not returning:
             # The first assignment is the hardware split. Later decisions move
             # one capped step away from whatever is already in effect.
             stepped = {
@@ -189,7 +193,8 @@ class AMPPOBalancer(Balancer):
                 for backend, alive in zip(self._backends, action.alive_mask)
             }
         else:
-            # A 40% CPU reading must not replace weight 70 with 350.
+            # A 40% CPU reading must not replace weight 70 with 350. A host that
+            # just came back is the exception: seed it at the smallest live weight.
             stepped = step_toward_even_cpu(
                 self._backends,
                 self._current_weights,

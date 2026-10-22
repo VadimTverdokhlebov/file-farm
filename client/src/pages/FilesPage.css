@@ -20,25 +20,10 @@
   margin-bottom: 24px;
 }
 
-.files-kicker {
-  margin: 0 0 6px;
-  color: #1f6f5b;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 .files-header h1 {
   margin: 0;
   font-size: 40px;
   line-height: 1.1;
-}
-
-.files-lead {
-  max-width: 62ch;
-  margin: 10px 0 0;
-  color: #5c6b7a;
 }
 
 .files-nav {
@@ -71,14 +56,11 @@
   font-size: 20px;
 }
 
-.files-card-copy,
 .files-library-head p,
-.files-empty,
 .files-meta {
   color: #5c6b7a;
 }
 
-.files-card-copy,
 .files-library-head p {
   margin: 8px 0 16px;
 }
@@ -118,10 +100,6 @@
 
 .files-library {
   margin-top: 16px;
-}
-
-.files-empty {
-  margin: 0 0 18px;
 }
 
 .files-list {

@@ -167,6 +167,8 @@ def step_toward_even_cpu(
     therefore moves 70% of the step and the CPU gap moves the other 30%.
     A server at 40% with weight 70 still cannot jump to a new share in one
     decision. A stopped server drops to 0; that mass may exceed the cap.
+    Coming back is the other exception: that host is seeded at the smallest
+    live weight plus the network hint, then the ±max_step cap applies again.
     """
     if len(cpu_utilization) != len(backends) or len(alive_mask) != len(backends):
         raise ValueError("CPU and health must match backend count")
@@ -199,7 +201,36 @@ def step_toward_even_cpu(
         raw = network_share * network_deltas[index] + (1.0 - network_share) * cpu_delta
         deltas.append(min(max(raw, -float(max_step)), float(max_step)))
 
-    return _apply_capped_step(backends, current, healthy, deltas, weights, weight_total, max_step)
+    seeded = _seed_returning_current(backends, current, healthy)
+    return _apply_capped_step(backends, seeded, healthy, deltas, weights, weight_total, max_step)
+
+
+def _seed_returning_current(
+    backends: tuple[Backend, ...],
+    current: dict[str, int],
+    healthy: list[int],
+) -> dict[str, int]:
+    """Give a host that just came back the smallest live EDS weight.
+
+    While it was down its weight was 0, so the ±max_step cap would only let
+    it climb 20 points per decision. Copy the lightest live peer instead of
+    the coolest one: the largest server is often the least loaded and would
+    dump hundreds of points onto a host that just came up.
+    """
+    already_up = [
+        index for index in healthy if current.get(backends[index].host, 0) > 0
+    ]
+    returning = [
+        index for index in healthy if current.get(backends[index].host, 0) <= 0
+    ]
+    if not already_up or not returning:
+        return current
+
+    reference_weight = min(int(current[backends[index].host]) for index in already_up)
+    seeded = dict(current)
+    for index in returning:
+        seeded[backends[index].host] = reference_weight
+    return seeded
 
 
 def _fit_weight_total(

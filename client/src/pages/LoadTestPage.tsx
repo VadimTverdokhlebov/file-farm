@@ -36,10 +36,12 @@ export const LoadTestPage = () => {
     status,
     serverHistory,
     startSeries,
+    clearResults,
     series,
     seriesResults,
     stopTest,
     setServerPower,
+    manualOutages,
     pendingServer,
     error,
     isLoading,
@@ -48,11 +50,11 @@ export const LoadTestPage = () => {
   const [presetId, setPresetId] = useState<string | null>(null);
   const [concurrency, setConcurrency] = useState(defaultValues.concurrency);
   const [duration, setDuration] = useState(defaultValues.duration);
-  const [durationUnit, setDurationUnit] = useState<DurationUnit>('s');
+  const [durationUnit, setDurationUnit] = useState<DurationUnit>('min');
   const [fileSizeMinKb, setFileSizeMinKb] = useState(defaultValues.fileSizeMinKb);
   const [fileSizeMaxKb, setFileSizeMaxKb] = useState(defaultValues.fileSizeMaxKb);
   const [fileSizeUnit, setFileSizeUnit] = useState<FileSizeUnit>('KB');
-  const [outageUnit, setOutageUnit] = useState<DurationUnit>('s');
+  const [outageUnit, setOutageUnit] = useState<DurationUnit>('min');
   const [outages, setOutages] = useState<ScheduledOutage[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
   // Algorithms of the test, one select per row; until the first change only AM-PPO is in.
@@ -82,33 +84,17 @@ export const LoadTestPage = () => {
   }, [seriesActive]);
 
   const handleStart = () => {
-    if (endpoints.length === 0) {
-      setFormError('No methods available. Check that the load stand is running.');
-      return;
-    }
-    if (compareIds.length === 0) {
-      setFormError('Select at least one algorithm.');
-      return;
-    }
-    if (concurrency < 1) {
-      setFormError('At least one client is required.');
-      return;
-    }
-    if (duration < 0) {
-      setFormError('Duration cannot be negative. 0 means no time limit.');
-      return;
-    }
-    if (duration === 0 && compareIds.length !== 1) {
-      setFormError('A test without a time limit (0) takes one algorithm only: algorithms take turns by time.');
-      return;
-    }
-    if (fileSizeMinKb < 1 || fileSizeMaxKb < fileSizeMinKb || fileSizeMaxKb > maxTestFileSizeKb) {
-      setFormError(`File size must be 1 to ${maxTestFileSizeKb} KB, the minimum cannot exceed the maximum.`);
-      return;
-    }
-    const outageError = outageProblem(outages, duration);
-    if (outageError) {
-      setFormError(outageError);
+    const problem = formProblem({
+      hasEndpoints: endpoints.length > 0,
+      compareIds,
+      concurrency,
+      duration,
+      fileSizeMinKb,
+      fileSizeMaxKb,
+      outages,
+    });
+    if (problem) {
+      setFormError(problem);
       return;
     }
 
@@ -211,12 +197,13 @@ export const LoadTestPage = () => {
             <NumberField
               id="concurrency"
               label="Concurrent clients"
+              integer
               min={1}
               value={concurrency}
               disabled={busy}
               onChange={setConcurrency}
             />
-            <MeasuredField
+            <NumberField
               id="duration"
               label="Duration"
               min={0}
@@ -224,14 +211,16 @@ export const LoadTestPage = () => {
               disabled={busy}
               onChange={(value) => setDuration(toSeconds(value, durationUnit))}
             />
-            <UnitSwitch
-              units={DURATION_UNITS}
+            <SelectField
+              label="Duration unit"
+              hideLabel
+              className="load-unit-select"
               value={durationUnit}
               disabled={busy}
-              label="Duration unit"
+              options={DURATION_UNITS}
               onChange={setDurationUnit}
             />
-            <MeasuredField
+            <NumberField
               id="fileSizeMinKb"
               label="Min file size"
               min={fromKb(1, fileSizeUnit)}
@@ -240,7 +229,7 @@ export const LoadTestPage = () => {
               disabled={busy}
               onChange={(value) => setFileSizeMinKb(toKb(value, fileSizeUnit))}
             />
-            <MeasuredField
+            <NumberField
               id="fileSizeMaxKb"
               label="Max file size"
               min={fromKb(1, fileSizeUnit)}
@@ -249,11 +238,13 @@ export const LoadTestPage = () => {
               disabled={busy}
               onChange={(value) => setFileSizeMaxKb(toKb(value, fileSizeUnit))}
             />
-            <UnitSwitch
-              units={FILE_SIZE_UNITS}
+            <SelectField
+              label="File size unit"
+              hideLabel
+              className="load-unit-select"
               value={fileSizeUnit}
               disabled={busy}
-              label="File size unit"
+              options={FILE_SIZE_UNITS}
               onChange={setFileSizeUnit}
             />
           </div>
@@ -262,23 +253,16 @@ export const LoadTestPage = () => {
           <div className="load-fields load-outage-fields">
             {outages.map((outage, index) => (
               <Fragment key={index}>
-                <label className="load-field" htmlFor={`outage-${index}-server`}>
-                  {index === 0 ? 'Server' : null}
-                  <select
-                    id={`outage-${index}-server`}
-                    value={outage.server}
-                    disabled={busy}
-                    aria-label="Server"
-                    onChange={(event) => updateOutage(index, { server: event.target.value })}
-                  >
-                    {trainingServerNames.map((name) => (
-                      <option key={name} value={name}>
-                        {serverLabel(name)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <MeasuredField
+                <SelectField
+                  id={`outage-${index}-server`}
+                  label="Server"
+                  hideLabel={index > 0}
+                  value={outage.server}
+                  disabled={busy}
+                  options={trainingServerNames.map((name) => ({ id: name, label: serverLabel(name) }))}
+                  onChange={(server) => updateOutage(index, { server })}
+                />
+                <NumberField
                   id={`outage-${index}-stop`}
                   label="Stop at"
                   hideLabel={index > 0}
@@ -287,7 +271,7 @@ export const LoadTestPage = () => {
                   disabled={busy}
                   onChange={(value) => updateOutage(index, { stopAtSec: toSeconds(value, outageUnit) })}
                 />
-                <MeasuredField
+                <NumberField
                   id={`outage-${index}-start`}
                   label="Start at"
                   hideLabel={index > 0}
@@ -297,11 +281,13 @@ export const LoadTestPage = () => {
                   onChange={(value) => updateOutage(index, { startAtSec: toSeconds(value, outageUnit) })}
                 />
                 {index === 0 ? (
-                  <UnitSwitch
-                    units={DURATION_UNITS}
+                  <SelectField
+                    label="Outage unit"
+                    hideLabel
+                    className="load-unit-select"
                     value={outageUnit}
                     disabled={busy}
-                    label="Outage unit"
+                    options={DURATION_UNITS}
                     onChange={setOutageUnit}
                   />
                 ) : (
@@ -323,23 +309,17 @@ export const LoadTestPage = () => {
           <div className="load-fields load-algorithm-fields">
             {compareIds.map((id, index) => (
               <Fragment key={id}>
-                <label className="load-field" htmlFor={`algorithm-${index}`}>
-                  <select
-                    id={`algorithm-${index}`}
-                    value={id}
-                    disabled={busy || isLoading}
-                    aria-label="Algorithm"
-                    onChange={(event) => changeAlgorithm(index, event.target.value)}
-                  >
-                    {algorithms
-                      .filter((algorithm) => algorithm.id === id || !compareIds.includes(algorithm.id))
-                      .map((algorithm) => (
-                        <option key={algorithm.id} value={algorithm.id}>
-                          {algorithm.name}
-                        </option>
-                      ))}
-                  </select>
-                </label>
+                <SelectField
+                  id={`algorithm-${index}`}
+                  label="Algorithm"
+                  hideLabel
+                  value={id}
+                  disabled={busy || isLoading}
+                  options={algorithms
+                    .filter((algorithm) => algorithm.id === id || !compareIds.includes(algorithm.id))
+                    .map((algorithm) => ({ id: algorithm.id, label: algorithm.name }))}
+                  onChange={(next) => changeAlgorithm(index, next)}
+                />
                 <Button
                   variant="secondary"
                   disabled={busy || compareIds.length <= 1}
@@ -369,11 +349,16 @@ export const LoadTestPage = () => {
           )}
 
           <div className="load-actions">
-            <Button onClick={handleStart} disabled={busy}>
-              {busy ? 'Running...' : 'Start'}
-            </Button>
-            <Button variant="danger" onClick={stopTest} disabled={!busy}>
-              Stop
+            <div className="load-actions-group">
+              <Button onClick={handleStart} disabled={busy}>
+                {busy ? 'Running...' : 'Start'}
+              </Button>
+              <Button variant="danger" onClick={stopTest} disabled={!busy}>
+                Stop
+              </Button>
+            </div>
+            <Button variant="secondary" onClick={clearResults} disabled={busy}>
+              Refresh
             </Button>
           </div>
           {formError && <p className="load-notice load-notice-error">{formError}</p>}
@@ -393,28 +378,13 @@ export const LoadTestPage = () => {
           <div className="load-stats">
             {series && (
               <>
-                <div>
-                  <span>Algorithm</span>
-                  <strong>{currentAlgorithmName(series, algorithms)}</strong>
-                </div>
-                <div>
-                  <span>Run</span>
-                  <strong>{series.current + 1} / {series.runs.length}</strong>
-                </div>
+                <Stat label="Algorithm" value={currentAlgorithmName(series, algorithms)} />
+                <Stat label="Run" value={`${series.current + 1} / ${series.runs.length}`} />
               </>
             )}
-            <div>
-              <span>Time</span>
-              <strong>{formatClock(series?.elapsedSec ?? 0)}</strong>
-            </div>
-            <div>
-              <span>Successful requests</span>
-              <strong>{status.stats.successfulRequests || 0}</strong>
-            </div>
-            <div>
-              <span>Failed requests</span>
-              <strong>{status.stats.failedRequests || 0}</strong>
-            </div>
+            <Stat label="Time" value={formatClock(series?.elapsedSec ?? 0)} />
+            <Stat label="Successful requests" value={status.stats.successfulRequests || 0} />
+            <Stat label="Failed requests" value={status.stats.failedRequests || 0} />
           </div>
         </section>
 
@@ -479,12 +449,17 @@ export const LoadTestPage = () => {
 
         <section className="load-card">
           <h2>Server charts</h2>
-          <SeriesServerCharts series={series} algorithms={algorithms} liveHistory={serverHistory} />
+          <SeriesServerCharts
+            series={series ?? seriesResults}
+            algorithms={algorithms}
+            liveHistory={serverHistory}
+            manualOutages={manualOutages}
+          />
         </section>
 
         <section className="load-card">
           <h2>Algorithm comparison charts</h2>
-          <AlgorithmComparison series={seriesResults} algorithms={algorithms} />
+          <AlgorithmComparison series={seriesResults} algorithms={algorithms} extraOutages={manualOutages} />
         </section>
 
         <section className="load-card">
@@ -554,10 +529,19 @@ function prettyDiv(value: number, divisor: number): number {
   return Number((value / divisor).toFixed(4));
 }
 
+function clampNumber(raw: string, min: number, max: number | undefined, integer: boolean): number {
+  const parsed = integer ? parseInt(raw, 10) : Number(raw);
+  if (!Number.isFinite(parsed) || parsed < min) {
+    return min;
+  }
+  return max !== undefined && parsed > max ? max : parsed;
+}
+
 function NumberField({
   id,
   label,
   hideLabel,
+  integer,
   value,
   min,
   max,
@@ -567,6 +551,7 @@ function NumberField({
   id: string;
   label: string;
   hideLabel?: boolean;
+  integer?: boolean;
   value: number;
   min: number;
   max?: number;
@@ -581,89 +566,47 @@ function NumberField({
         type="number"
         min={min}
         max={max}
+        step={integer ? 1 : 'any'}
         value={value}
         disabled={disabled}
         aria-label={label}
-        onChange={(event) => {
-          const parsed = parseInt(event.target.value, 10);
-          if (Number.isNaN(parsed) || parsed < min) {
-            onChange(min);
-            return;
-          }
-          onChange(max !== undefined && parsed > max ? max : parsed);
-        }}
+        onChange={(event) => onChange(clampNumber(event.target.value, min, max, integer === true))}
       />
     </label>
   );
 }
 
-function MeasuredField({
+function SelectField<T extends string>({
   id,
   label,
   hideLabel,
+  className,
   value,
-  min,
-  max,
   disabled,
+  options,
   onChange,
 }: {
-  id: string;
+  id?: string;
   label: string;
   hideLabel?: boolean;
-  value: number;
-  min: number;
-  max?: number;
+  className?: string;
+  value: T;
   disabled: boolean;
-  onChange: (value: number) => void;
+  options: UnitOption<T>[];
+  onChange: (value: T) => void;
 }) {
   return (
     <label className="load-field" htmlFor={id}>
       {hideLabel ? null : label}
-      <input
-        id={id}
-        type="number"
-        min={min}
-        max={max}
-        step="any"
-        value={value}
-        disabled={disabled}
-        aria-label={label}
-        onChange={(event) => {
-          const parsed = Number(event.target.value);
-          if (!Number.isFinite(parsed) || parsed < min) {
-            onChange(min);
-            return;
-          }
-          onChange(max !== undefined && parsed > max ? max : parsed);
-        }}
-      />
-    </label>
-  );
-}
-
-function UnitSwitch<T extends string>({
-  units,
-  value,
-  disabled,
-  label,
-  onChange,
-}: {
-  units: UnitOption<T>[];
-  value: T;
-  disabled: boolean;
-  label: string;
-  onChange: (unit: T) => void;
-}) {
-  return (
-    <label className="load-field">
       <select
-        className="load-unit-select"
-        aria-label={label}
+        id={id}
+        className={className}
         value={value}
         disabled={disabled}
+        aria-label={label}
         onChange={(event) => onChange(event.target.value as T)}
       >
-        {units.map((item) => (
+        {options.map((item) => (
           <option key={item.id} value={item.id}>
             {item.label}
           </option>
@@ -671,6 +614,53 @@ function UnitSwitch<T extends string>({
       </select>
     </label>
   );
+}
+
+function Stat({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function formProblem({
+  hasEndpoints,
+  compareIds,
+  concurrency,
+  duration,
+  fileSizeMinKb,
+  fileSizeMaxKb,
+  outages,
+}: {
+  hasEndpoints: boolean;
+  compareIds: string[];
+  concurrency: number;
+  duration: number;
+  fileSizeMinKb: number;
+  fileSizeMaxKb: number;
+  outages: ScheduledOutage[];
+}): string | null {
+  if (!hasEndpoints) {
+    return 'No methods available. Check that the load stand is running.';
+  }
+  if (compareIds.length === 0) {
+    return 'Select at least one algorithm.';
+  }
+  if (concurrency < 1) {
+    return 'At least one client is required.';
+  }
+  if (duration < 0) {
+    return 'Duration cannot be negative. 0 means no time limit.';
+  }
+  if (duration === 0 && compareIds.length !== 1) {
+    return 'A test without a time limit (0) takes one algorithm only: algorithms take turns by time.';
+  }
+  if (fileSizeMinKb < 1 || fileSizeMaxKb < fileSizeMinKb || fileSizeMaxKb > maxTestFileSizeKb) {
+    return `File size must be 1 to ${maxTestFileSizeKb} KB, the minimum cannot exceed the maximum.`;
+  }
+  return outageProblem(outages, duration);
 }
 
 // What is wrong with the schedule of outages, or null when it can run. The load stand checks

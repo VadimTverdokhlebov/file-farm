@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { BalancerAlgorithm, SeriesRun, SeriesSample, SeriesStatus } from '../types/loadTest';
+import { BalancerAlgorithm, SeriesOutage, SeriesRun, SeriesSample, SeriesStatus } from '../types/loadTest';
 import { ChartScrollBar } from './ChartScrollBar';
-import { formatTick, niceMax } from './chartMath';
+import { formatTick, formatTestSeconds, outageOverlapsWindow, scaleMax, testClockOutages, testRulerTicks } from './chartMath';
 
 const COLORS = ['#1f6f5b', '#2563eb', '#d97706', '#be123c', '#7c3aed', '#0891b2', '#65a30d', '#6b7280'];
 
@@ -23,8 +23,6 @@ const MINOR_TICK = 3;
 const MAJOR_TICK = 7;
 // Display smoothing: each point is the mean of this many seconds on both sides.
 const SMOOTH_HALF_WIDTH = 3;
-// Ruler steps in seconds, the smallest that keeps the labels to about ten.
-const MAJOR_STEPS_SEC = [10, 30, 60, 120, 300, 600, 1800, 3600];
 // Chart windows in seconds, the same set as on the server charts.
 const RANGES = [
   { label: '3 min', sec: 3 * 60 },
@@ -36,36 +34,25 @@ const RANGES = [
 export function AlgorithmComparison({
   series,
   algorithms,
+  extraOutages,
 }: {
   series: SeriesStatus | null;
   algorithms: BalancerAlgorithm[];
+  extraOutages?: SeriesOutage[];
 }) {
   const [hidden, setHidden] = useState<string[]>([]);
-  // null follows the test: the shortest window that holds the whole run.
-  const [rangeSec, setRangeSec] = useState<number | null>(null);
+  const [rangeSec, setRangeSec] = useState(RANGES[0].sec);
   // null follows the latest data, a number is where the scrolled window starts.
   const [scrollSec, setScrollSec] = useState<number | null>(null);
 
-  const emptyWindowSec = rangeSec ?? RANGES[0].sec;
   if (!series || series.runs.length === 0) {
     return (
       <>
-        <div className="load-chart-range" role="group" aria-label="Chart interval">
-          {RANGES.map((item) => (
-            <button
-              key={item.sec}
-              type="button"
-              aria-pressed={item.sec === emptyWindowSec}
-              onClick={() => setRangeSec(item.sec)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
+        <RangeButtons selected={rangeSec} onChange={setRangeSec} />
         <p className="load-empty">No runs yet. Pick algorithms and press Start.</p>
         <ChartScrollBar
           total={0}
-          window={emptyWindowSec}
+          window={rangeSec}
           start={0}
           onScroll={setScrollSec}
           label="Scroll the charts"
@@ -83,9 +70,8 @@ export function AlgorithmComparison({
   const shown = series.runs
     .map((run, index) => ({ run, index }))
     .filter(({ run }) => withSamples(run) && !hidden.includes(run.algorithm));
-  const windowSec =
-    rangeSec ?? (RANGES.find((item) => item.sec >= series.durationSec) ?? RANGES[RANGES.length - 1]).sec;
-  // The window ends at the latest sample, like the server charts, and starts at 0 until the test outgrows it.
+  const windowSec = rangeSec;
+  // The window starts at 0 until the test fills it, then follows the latest sample.
   const latestSec = Math.max(0, ...shown.flatMap(({ run }) => (run.samples ?? []).map((sample) => sample.t)));
   const lastStartSec = Math.max(0, latestSec - windowSec);
   const windowStartSec = scrollSec === null ? lastStartSec : Math.min(Math.max(scrollSec, 0), lastStartSec);
@@ -112,18 +98,7 @@ export function AlgorithmComparison({
           </button>
         ))}
       </div>
-      <div className="load-chart-range" role="group" aria-label="Chart interval">
-        {RANGES.map((item) => (
-          <button
-            key={item.sec}
-            type="button"
-            aria-pressed={item.sec === windowSec}
-            onClick={() => setRangeSec(item.sec)}
-          >
-            {item.label}
-          </button>
-        ))}
-      </div>
+      <RangeButtons selected={windowSec} onChange={setRangeSec} />
       <div className="load-charts">
         {METRICS.map((metric) => (
           <article className="load-chart" key={metric.key}>
@@ -144,7 +119,7 @@ export function AlgorithmComparison({
               fixedMax={metric.fixedMax}
               windowStartSec={windowStartSec}
               windowSec={windowSec}
-              series={series}
+              outages={testClockOutages(series.outages, extraOutages ?? [])}
             />
           </article>
         ))}
@@ -157,6 +132,23 @@ export function AlgorithmComparison({
         label="Scroll the charts"
       />
     </>
+  );
+}
+
+function RangeButtons({ selected, onChange }: { selected: number; onChange: (sec: number) => void }) {
+  return (
+    <div className="load-chart-range" role="group" aria-label="Chart interval">
+      {RANGES.map((item) => (
+        <button
+          key={item.sec}
+          type="button"
+          aria-pressed={item.sec === selected}
+          onClick={() => onChange(item.sec)}
+        >
+          {item.label}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -181,14 +173,14 @@ function ComparisonChart({
   fixedMax,
   windowStartSec,
   windowSec,
-  series,
+  outages,
 }: {
   runs: { run: SeriesRun; color: string }[];
   metric: MetricKey;
   fixedMax: number | null;
   windowStartSec: number;
   windowSec: number;
-  series: SeriesStatus;
+  outages: SeriesOutage[];
 }) {
   const plotW = VIEW_W - PAD.left - PAD.right;
   const plotH = VIEW_H - PAD.top - PAD.bottom;
@@ -209,8 +201,8 @@ function ComparisonChart({
 
   return (
     <svg viewBox={`0 0 ${VIEW_W} ${VIEW_H}`} role="img" aria-label={metric}>
-      {(series.outages ?? [])
-        .filter((outage) => outage.startAtSec > windowStartSec && outage.stopAtSec < windowStartSec + windowSec)
+      {outages
+        .filter((outage) => outageOverlapsWindow(outage.stopAtSec, outage.startAtSec, windowStartSec, windowSec))
         .map((outage) => (
         <g key={`${outage.server}-${outage.stopAtSec}`}>
           <rect
@@ -220,7 +212,7 @@ function ComparisonChart({
             height={plotH}
             className="load-chart-outage"
           >
-            <title>{`${outage.server} stopped from ${formatSeconds(outage.stopAtSec)} to ${formatSeconds(outage.startAtSec)}`}</title>
+            <title>{`${outage.server} stopped from ${formatTestSeconds(outage.stopAtSec)} to ${formatTestSeconds(outage.startAtSec)}`}</title>
           </rect>
           {outage.stopAtSec >= windowStartSec && (
             <text x={xOf(outage.stopAtSec) + 3} y={PAD.top + 10} className="load-chart-outage-label">
@@ -237,7 +229,7 @@ function ComparisonChart({
           </text>
         </g>
       ))}
-      {rulerTicks(windowStartSec, windowSec).map((tick) => (
+      {testRulerTicks(windowStartSec, windowSec).map((tick) => (
         <g key={tick.sec}>
           <line
             x1={xOf(tick.sec)}
@@ -285,31 +277,4 @@ function smooth(samples: SeriesSample[], metric: MetricKey): { t: number; value:
     }
     return { t: sample.t, value: sum / (to - from + 1) };
   });
-}
-
-function scaleMax(peak: number, fixedMax: number | null): number {
-  if (!Number.isFinite(peak) || peak <= 0) {
-    return fixedMax != null && fixedMax > 0 ? fixedMax : 1;
-  }
-  const auto = niceMax(peak);
-  return fixedMax == null ? auto : Math.min(fixedMax, auto);
-}
-
-// A short tick every half of the labelled step, a long tick with a label at the
-// labelled step, both on round test times so they slide left as the window moves.
-// For a ten minute window that is a tick every 30 s and ten labels, one per minute.
-function rulerTicks(startSec: number, windowSec: number): { sec: number; label: string | null }[] {
-  const majorSec = MAJOR_STEPS_SEC.find((step) => windowSec / step <= 10) ?? MAJOR_STEPS_SEC[MAJOR_STEPS_SEC.length - 1];
-  const minorSec = majorSec / 2;
-  const ticks: { sec: number; label: string | null }[] = [];
-  for (let sec = Math.ceil(startSec / minorSec) * minorSec; sec <= startSec + windowSec; sec += minorSec) {
-    ticks.push({ sec, label: sec > 0 && sec % majorSec === 0 ? formatSeconds(sec) : null });
-  }
-  return ticks;
-}
-
-function formatSeconds(totalSeconds: number): string {
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }

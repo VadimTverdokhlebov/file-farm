@@ -69,8 +69,9 @@ func (h *Handler) HandleSeries(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(h.engine.SeriesSnapshot(true))
 }
 
-// HandleSeriesServers returns the per-server samples of one finished run:
-// /api/series/runs/{index}/servers.
+// HandleSeriesServers returns the per-server samples of one run:
+// /api/series/runs/{index}/servers. A run that is still going is included so a
+// reload can restore the charts.
 func (h *Handler) HandleSeriesServers(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/series/runs/"), "/"), "/")
 	index, err := strconv.Atoi(parts[0])
@@ -189,6 +190,10 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 			}
 		case "startSeries":
 			if err := h.engine.StartSeries(cmd.Payload); err != nil {
+				h.sendError(conn, err.Error())
+			}
+		case "clear":
+			if err := h.engine.ClearResults(); err != nil {
 				h.sendError(conn, err.Error())
 			}
 		case "stop":

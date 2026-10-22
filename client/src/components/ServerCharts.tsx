@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { ServerHistoryPoint, ServerStatus } from '../types/loadTest';
+import { ServerHistoryPoint, ServerStatus, SeriesOutage } from '../types/loadTest';
 import { ChartScrollBar } from './ChartScrollBar';
-import { formatTick, niceMax } from './chartMath';
+import { formatTick, formatTestSeconds, outageOverlapsWindow, scaleMax, testRulerTicks } from './chartMath';
 
 const SERVER_COLORS = ['#1f6f5b', '#2563eb', '#d97706', '#be123c'];
 const TOTAL_COLOR = '#1f6f5b';
@@ -17,24 +17,20 @@ const METRICS: { key: MetricKey; label: string; unit: string; fixedMax: number |
   { key: 'mem', label: 'Memory', unit: 'MB', fixedMax: null },
 ];
 
-const SECOND = 1000;
-const MINUTE = 60 * SECOND;
+const MINUTE = 60 * 1000;
 
-// A ruler under every chart: a short tick every minorMs, a long tick with a clock
-// label every majorMs. Ticks sit on round clock times, so they slide left as the
-// window moves instead of the labels jumping to the edge of the data.
 const RANGES = [
-  { label: '3 min', ms: 3 * MINUTE, minorMs: 10 * SECOND, majorMs: 30 * SECOND },
-  { label: '10 min', ms: 10 * MINUTE, minorMs: 30 * SECOND, majorMs: MINUTE },
-  { label: '30 min', ms: 30 * MINUTE, minorMs: MINUTE, majorMs: 5 * MINUTE },
-  { label: '1 h', ms: 60 * MINUTE, minorMs: 5 * MINUTE, majorMs: 10 * MINUTE },
+  { label: '3 min', ms: 3 * MINUTE },
+  { label: '10 min', ms: 10 * MINUTE },
+  { label: '30 min', ms: 30 * MINUTE },
+  { label: '1 h', ms: 60 * MINUTE },
 ];
 
 type Range = (typeof RANGES)[number];
 
 const VIEW_W = 640;
 const VIEW_H = 206;
-const PAD = { top: 10, right: 8, bottom: 28, left: 42 };
+const PAD = { top: 10, right: 12, bottom: 28, left: 42 };
 const MINOR_TICK = 3;
 const MAJOR_TICK = 7;
 
@@ -49,12 +45,18 @@ export function ServerCharts({
   history,
   initialRangeMs,
   outages,
+  originMs,
+  scheduledOutages,
 }: {
   history: ServerHistoryPoint[];
   // Window shown at first; the default is the shortest one.
   initialRangeMs?: number;
-  // Shaded on every chart while the server is down by the schedule.
+  // Shaded on every chart while the server is down, when there is no test schedule.
   outages?: ServerOutageBand[];
+  // Start of the test. With this the axis and the red strips follow test seconds,
+  // the same way as on the algorithm comparison charts.
+  originMs?: number;
+  scheduledOutages?: SeriesOutage[];
 }) {
   const [range, setRange] = useState<Range>(
     RANGES.find((item) => item.ms === initialRangeMs) ?? RANGES[0],
@@ -63,13 +65,19 @@ export function ServerCharts({
   // null follows the latest data, a number is where the scrolled window starts.
   const [scrollAt, setScrollAt] = useState<number | null>(null);
   const names = serverNames(history);
-  const latestAt = history.length > 0 ? history[history.length - 1].at : Date.now();
-  const firstAt = history.length > 0 ? history[0].at : latestAt;
+  const seriesPoints = originMs != null
+    ? history.filter((point) => point.at >= originMs)
+    : history;
+  const latestAt = seriesPoints.length > 0 ? seriesPoints[seriesPoints.length - 1].at : Date.now();
+  const firstAt = seriesPoints.length > 0 ? seriesPoints[0].at : latestAt;
+  // Draw from the left until the window is full, then follow the latest point.
+  const origin = originMs ?? firstAt;
   const lastStart = latestAt - rangeMs;
-  const canScroll = lastStart > firstAt;
-  const windowStart = scrollAt === null || !canScroll ? lastStart : Math.min(Math.max(scrollAt, firstAt), lastStart);
-  const windowEnd = windowStart + rangeMs;
-  const visible = history.filter((point) => point.at >= windowStart && point.at <= windowEnd);
+  const canScroll = lastStart > origin;
+  const windowStart = scrollAt === null || !canScroll
+    ? (canScroll ? lastStart : origin)
+    : Math.min(Math.max(scrollAt, origin), lastStart);
+  const visible = seriesPoints.filter((point) => point.at >= windowStart && point.at <= windowStart + rangeMs);
 
   return (
     <>
@@ -115,18 +123,21 @@ export function ServerCharts({
                 metric={metric.key}
                 fixedMax={metric.fixedMax}
                 windowStart={windowStart}
-                range={range}
+                windowMs={rangeMs}
                 outages={outages ?? []}
+                origin={origin}
+                originMs={originMs}
+                scheduledOutages={scheduledOutages ?? []}
               />
             </article>
           ))}
         </div>
       )}
       <ChartScrollBar
-        total={latestAt - firstAt}
+        total={Math.max(0, latestAt - origin)}
         window={rangeMs}
-        start={windowStart - firstAt}
-        onScroll={(next) => setScrollAt(next == null ? null : firstAt + next)}
+        start={windowStart - origin}
+        onScroll={(next) => setScrollAt(next == null ? null : origin + next)}
         label="Scroll the charts"
       />
     </>
@@ -139,20 +150,29 @@ function MetricChart({
   metric,
   fixedMax,
   windowStart,
-  range,
+  windowMs,
+  origin,
+  originMs,
   outages,
+  scheduledOutages,
 }: {
   history: ServerHistoryPoint[];
   names: string[];
   metric: MetricKey;
   fixedMax: number | null;
   windowStart: number;
-  range: Range;
+  windowMs: number;
+  origin: number;
+  originMs?: number;
   outages: ServerOutageBand[];
+  scheduledOutages: SeriesOutage[];
 }) {
-  const windowMs = range.ms;
+  const windowStartSec = (windowStart - origin) / 1000;
+  const windowSec = windowMs / 1000;
   const plotW = VIEW_W - PAD.left - PAD.right;
   const plotH = VIEW_H - PAD.top - PAD.bottom;
+  const xOfSec = (sec: number) => xOf(origin + sec * 1000, windowStart, windowMs, plotW);
+  const planned = originMs != null ? scheduledOutages : [];
   const rawSeries = metric === 'totalRps'
     ? [history.map((point) => totalRps(point))]
     : names.map((name) => history.map((point, index) => (
@@ -168,13 +188,33 @@ function MetricChart({
 
   return (
     <svg viewBox={`0 0 ${VIEW_W} ${VIEW_H}`} role="img" aria-label={metric}>
+      {planned
+        .filter((outage) => outageOverlapsWindow(outage.stopAtSec, outage.startAtSec, windowStartSec, windowSec))
+        .map((outage) => (
+          <g key={`plan-${outage.server}-${outage.stopAtSec}`}>
+            <rect
+              x={xOfSec(outage.stopAtSec)}
+              y={PAD.top}
+              width={Math.max(xOfSec(outage.startAtSec) - xOfSec(outage.stopAtSec), 0)}
+              height={plotH}
+              className="load-chart-outage"
+            >
+              <title>{`${outage.server} stopped from ${formatTestSeconds(outage.stopAtSec)} to ${formatTestSeconds(outage.startAtSec)}`}</title>
+            </rect>
+            {outage.stopAtSec >= windowStartSec && (
+              <text x={xOfSec(outage.stopAtSec) + 3} y={PAD.top + 10} className="load-chart-outage-label">
+                {`S${outage.server.replace(/\D+/g, '')}`}
+              </text>
+            )}
+          </g>
+        ))}
       {outages
         .filter((outage) => outage.toMs > windowStart && outage.fromMs < windowStart + windowMs)
         .map((outage) => {
           const left = xOf(outage.fromMs, windowStart, windowMs, plotW);
           const right = xOf(outage.toMs, windowStart, windowMs, plotW);
           return (
-            <g key={`${outage.server}-${outage.fromMs}`}>
+            <g key={`live-${outage.server}-${outage.fromMs}`}>
               <rect x={left} y={PAD.top} width={Math.max(right - left, 0)} height={plotH} className="load-chart-outage">
                 <title>{`${outage.server} stopped from ${formatClock(outage.fromMs)} to ${formatClock(outage.toMs)}`}</title>
               </rect>
@@ -197,17 +237,17 @@ function MetricChart({
           </g>
         );
       })}
-      {timeTicks(windowStart, range, plotW).map((tick) => (
-        <g key={tick.at}>
+      {testRulerTicks(windowStartSec, windowSec).map((tick) => (
+        <g key={tick.sec}>
           <line
-            x1={tick.x}
-            x2={tick.x}
+            x1={xOfSec(tick.sec)}
+            x2={xOfSec(tick.sec)}
             y1={PAD.top + plotH}
             y2={PAD.top + plotH + (tick.label ? MAJOR_TICK : MINOR_TICK)}
             className="load-chart-ruler"
           />
           {tick.label && (
-            <text x={tick.x} y={VIEW_H - 6} className="load-chart-tick" textAnchor="middle">
+            <text x={xOfSec(tick.sec)} y={VIEW_H - 6} className="load-chart-tick" textAnchor="middle">
               {tick.label}
             </text>
           )}
@@ -312,31 +352,6 @@ function soften(run: PlotPoint[], tip: PlotPoint | null): PlotPoint[] {
   return smoothed;
 }
 
-// Ruler marks inside the window, on round clock times. Marks that fall on a multiple
-// of majorMs carry a label, the rest are plain ticks. A label that would run past
-// the edge of the chart is left out.
-function timeTicks(
-  windowStart: number,
-  range: Range,
-  plotW: number,
-): { at: number; x: number; label: string | null }[] {
-  const windowEnd = windowStart + range.ms;
-  // Round in local time, so a tick at 10:05 is a tick at 10:05 on the wall clock.
-  const offset = new Date(windowStart).getTimezoneOffset() * MINUTE;
-  const first = Math.ceil((windowStart - offset) / range.minorMs) * range.minorMs + offset;
-  const withSeconds = range.majorMs % MINUTE !== 0;
-  const halfLabel = withSeconds ? 30 : 20;
-  const ticks: { at: number; x: number; label: string | null }[] = [];
-
-  for (let at = first; at <= windowEnd; at += range.minorMs) {
-    const x = xOf(at, windowStart, range.ms, plotW);
-    const isMajor = Math.round((at - offset) / range.minorMs) * range.minorMs % range.majorMs === 0;
-    const fits = x - halfLabel >= 0 && x + halfLabel <= VIEW_W;
-    ticks.push({ at, x, label: isMajor && fits ? formatTickClock(at, withSeconds) : null });
-  }
-  return ticks;
-}
-
 function xOf(at: number, windowStart: number, windowMs: number, plotW: number): number {
   if (windowMs <= 0) {
     return PAD.left;
@@ -354,6 +369,10 @@ function metricValue(point: ServerHistoryPoint, name: string, metric: MetricKey)
   const server = point.servers.find((item) => item.name === name);
   if (!server) {
     return null;
+  }
+  // A stopped container still has a last cAdvisor RSS. Draw it on the zero axis.
+  if (isStopped(server)) {
+    return 0;
   }
   const raw = Number(server[metric as keyof ServerStatus]);
   return Number.isFinite(raw) ? raw : 0;
@@ -408,14 +427,6 @@ function yOf(value: number, max: number, plotH: number): number {
   return PAD.top + plotH - ratio * plotH;
 }
 
-function scaleMax(peak: number, fixedMax: number | null): number {
-  if (!Number.isFinite(peak) || peak <= 0) {
-    return fixedMax != null && fixedMax > 0 ? fixedMax : 1;
-  }
-  const auto = niceMax(peak);
-  return fixedMax == null ? auto : Math.min(fixedMax, auto);
-}
-
 function formatLatest(history: ServerHistoryPoint[], name: string, metric: MetricKey): string {
   if (metric === 'eds') {
     return formatNumber(weightValue(history, history.length - 1, name) ?? 0);
@@ -431,14 +442,6 @@ function formatNumber(value: number): string {
 
 function formatClock(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-}
-
-function formatTickClock(timestamp: number, withSeconds: boolean): string {
-  return new Date(timestamp).toLocaleTimeString('en-GB', {
-    hour: '2-digit',
-    minute: '2-digit',
-    ...(withSeconds ? { second: '2-digit' } : {}),
-  });
 }
 
 function shortName(name: string): string {

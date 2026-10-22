@@ -113,6 +113,9 @@ type Engine struct {
 	prometheusURL         string
 	docker                *dockerClient
 	serversToRestore      map[string]struct{}
+	// forcedOff is a stop that was requested but Docker may still be shutting
+	// the container down. Charts must treat it as down immediately.
+	forcedOff map[string]struct{}
 	loadGeneration        uint64
 	userCancels           []context.CancelFunc
 	testStartedAt         time.Time
@@ -197,7 +200,40 @@ func (e *Engine) GetStatus() (bool, StatusSnapshot) {
 }
 
 func (e *Engine) SetServerPower(ctx context.Context, name, action string) error {
-	return e.docker.setPower(ctx, name, action)
+	if action == "stop" {
+		e.setForcedOff(name, true)
+	}
+	err := e.docker.setPower(ctx, name, action)
+	if action == "stop" && err != nil {
+		e.setForcedOff(name, false)
+	}
+	if action == "start" && err == nil {
+		e.setForcedOff(name, false)
+	}
+	return err
+}
+
+func (e *Engine) setForcedOff(name string, off bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.forcedOff == nil {
+		e.forcedOff = map[string]struct{}{}
+	}
+	if off {
+		e.forcedOff[name] = struct{}{}
+		return
+	}
+	delete(e.forcedOff, name)
+}
+
+func (e *Engine) forcedOffSnapshot() map[string]struct{} {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make(map[string]struct{}, len(e.forcedOff))
+	for name := range e.forcedOff {
+		out[name] = struct{}{}
+	}
+	return out
 }
 
 func (e *Engine) markServerForRestore(name string) {

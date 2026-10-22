@@ -20,30 +20,15 @@
   margin-bottom: 24px;
 }
 
-.load-kicker {
-  margin: 0 0 6px;
-  color: #1f6f5b;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 .load-header h1 {
   margin: 0;
   font-size: 40px;
   line-height: 1.1;
 }
 
-.load-lead,
 .load-copy,
 .load-empty {
   color: #5c6b7a;
-}
-
-.load-lead {
-  max-width: 62ch;
-  margin: 10px 0 0;
 }
 
 .load-nav {
@@ -96,22 +81,6 @@
   color: #333;
 }
 
-.load-field-wide {
-  grid-column: 1 / -1;
-}
-
-fieldset.load-field {
-  border: 0;
-  margin: 0;
-  padding: 0;
-  min-inline-size: 0;
-}
-
-fieldset.load-field legend {
-  margin-bottom: 8px;
-  padding: 0;
-}
-
 .load-check {
   display: flex;
   align-items: center;
@@ -156,9 +125,17 @@ fieldset.load-field legend {
 
 .load-actions {
   display: flex;
+  justify-content: space-between;
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
   margin-top: 16px;
+}
+
+.load-actions-group {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .load-actions + .load-fields {

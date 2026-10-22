@@ -51,7 +51,7 @@ func (c *dockerClient) setPower(ctx context.Context, name, action string) error 
 	case "start":
 		path = fmt.Sprintf("%s/containers/%s/start", dockerAPIPrefix, name)
 	case "stop":
-		path = fmt.Sprintf("%s/containers/%s/stop?t=10", dockerAPIPrefix, name)
+		path = fmt.Sprintf("%s/containers/%s/stop?t=1", dockerAPIPrefix, name)
 	default:
 		return fmt.Errorf("action must be start or stop")
 	}
@@ -123,12 +123,23 @@ func (e *Engine) fetchServerStatuses() ([]ServerStatus, error) {
 	servers, err := FetchServerStatuses(e.prometheusURL)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if states, dockerErr := e.docker.running(ctx); dockerErr == nil {
-		applyContainerPower(servers, states)
-	} else {
-		applyContainerPower(servers, nil)
+	var states map[string]bool
+	if dockerStates, dockerErr := e.docker.running(ctx); dockerErr == nil {
+		states = dockerStates
 	}
+	applyContainerPower(servers, overlayForcedOff(states, e.forcedOffSnapshot()))
 	return servers, err
+}
+
+func overlayForcedOff(states map[string]bool, forcedOff map[string]struct{}) map[string]bool {
+	merged := make(map[string]bool, len(states)+len(forcedOff))
+	for name, running := range states {
+		merged[name] = running
+	}
+	for name := range forcedOff {
+		merged[name] = false
+	}
+	return merged
 }
 
 func applyContainerPower(servers []ServerStatus, states map[string]bool) {
@@ -154,4 +165,6 @@ func clearDownServer(server *ServerStatus) {
 	server.RPS = 0
 	server.Error = 0
 	server.CPU = 0
+	server.Mem = 0
+	server.RAM = 0
 }
