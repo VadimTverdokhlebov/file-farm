@@ -30,8 +30,10 @@ export interface TestMetrics {
   p95Millis?: number;
   p99Millis: number;
   errorRatePercent: number;
-  cpuFairnessIndex: number;
-  cpuFairnessAvailable: boolean;
+  // Mean absolute deviation of the CPU load of the servers, taken every second and averaged
+  // over the test, in percentage points of their own limits; lower is better.
+  cpuMadMeanPercent?: number;
+  cpuMadMeanAvailable?: boolean;
   durationSeconds: number;
 }
 
@@ -105,9 +107,7 @@ export interface LoadPreset {
 // One second of a run of a series, for the whole cluster.
 export interface SeriesSample {
   t: number;
-  meanCpu: number;
-  maxCpu: number;
-  cpuSpread: number;
+  cpuMad: number;
   rps: number;
   p50Ms: number;
   p95Ms: number;
@@ -137,6 +137,8 @@ export interface SeriesOutage {
 
 export interface SeriesStatus {
   active: boolean;
+  // Id of the scenario the series was started from.
+  preset?: string;
   phase: SeriesPhase;
   current: number;
   cooldownLeftSec: number;
@@ -145,4 +147,6 @@ export interface SeriesStatus {
   message?: string;
   outages?: SeriesOutage[];
   runs: SeriesRun[];
+  // Time of the whole series so far, the pauses between runs included.
+  elapsedSec?: number;
 }

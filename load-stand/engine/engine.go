@@ -121,11 +121,13 @@ type Engine struct {
 	waveIndex             int
 	waveCount             int
 	plannedWaveIterations int
-	cpuSamples            map[string]cpuSample
-	builder               *PayloadBuilder
-	seriesMu              sync.Mutex
-	series                *SeriesStatus
-	seriesCancel          context.CancelFunc
+	// cpuMADSum and cpuMADSeconds average the per-second deviation of the CPU load.
+	cpuMADSum     float64
+	cpuMADSeconds int
+	builder       *PayloadBuilder
+	seriesMu      sync.Mutex
+	series        *SeriesStatus
+	seriesCancel  context.CancelFunc
 }
 
 func NewEngine(target string, protoDir string, envoyAdminURL string, loadBalancerURL string, prometheusURL string, dockerSocket string) (*Engine, error) {
@@ -167,12 +169,7 @@ func (e *Engine) GetAvailableMethods() []string {
 }
 
 func (e *Engine) GetStatus() (bool, StatusSnapshot) {
-	servers, _ := FetchServerStatuses(e.prometheusURL)
-	if states, err := e.docker.running(context.Background()); err == nil {
-		applyContainerPower(servers, states)
-	} else {
-		applyContainerPower(servers, nil)
-	}
+	servers, _ := e.fetchServerStatuses()
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -404,7 +401,8 @@ func (e *Engine) StartTest(rawConfig TestConfig) error {
 	}
 	e.resetLoadStats()
 	e.mu.Lock()
-	e.cpuSamples = map[string]cpuSample{}
+	e.cpuMADSum = 0
+	e.cpuMADSeconds = 0
 	e.mu.Unlock()
 	waveIterations := resolvedWaveIterations(config)
 	e.mu.Lock()
@@ -591,7 +589,7 @@ func (e *Engine) abortTest() {
 
 func (e *Engine) finishTest() {
 	duration := time.Since(e.testStartedAt)
-	e.recordCPUSample()
+	e.recordCPUBalance()
 
 	latencyBuckets := make([]int64, len(e.stats.latencyBuckets))
 	for index := range e.stats.latencyBuckets {
@@ -602,10 +600,10 @@ func (e *Engine) finishTest() {
 		e.stats.FailedRequests.Load(),
 		latencyBuckets,
 		duration,
-		e.meanCPUUtilizations(),
 	)
 
 	e.mu.Lock()
+	e.addMeanMAD(&report)
 	e.stats.Report = &report
 	e.isRunning = false
 	e.cancelFunc = nil
@@ -633,14 +631,14 @@ func (e *Engine) finishTest() {
 		}
 	}
 	log.Printf(
-		"Test completed: RPS=%.2f p50=%.2fms p95=%.2fms p99=%.2fms errors=%.2f%% CPU fairness=%.4f (available=%t)",
+		"Test completed: RPS=%.2f p50=%.2fms p95=%.2fms p99=%.2fms errors=%.2f%% CPU MAD=%.2f%% (available=%t)",
 		report.RPS,
 		report.P50Millis,
 		report.P95Millis,
 		report.P99Millis,
 		report.ErrorRatePercent,
-		report.CpuFairnessIndex,
-		report.CpuFairnessAvailable,
+		report.CPUMADMeanPercent,
+		report.CPUMADMeanAvailable,
 	)
 }
 

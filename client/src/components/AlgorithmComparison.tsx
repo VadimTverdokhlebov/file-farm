@@ -1,20 +1,19 @@
 import { useState } from 'react';
-import { BalancerAlgorithm, SeriesRun, SeriesSample, SeriesStatus, TestMetrics } from '../types/loadTest';
+import { BalancerAlgorithm, SeriesRun, SeriesSample, SeriesStatus } from '../types/loadTest';
+import { ChartScrollBar } from './ChartScrollBar';
 import { formatTick, niceMax } from './chartMath';
 
 const COLORS = ['#1f6f5b', '#2563eb', '#d97706', '#be123c', '#7c3aed', '#0891b2', '#65a30d', '#6b7280'];
 
-type MetricKey = 'cpuSpread' | 'meanCpu' | 'maxCpu' | 'rps' | 'p50Ms' | 'p95Ms' | 'p99Ms' | 'errorPct';
+type MetricKey = 'cpuMad' | 'rps' | 'p50Ms' | 'p95Ms' | 'p99Ms' | 'errorPct';
 
 const METRICS: { key: MetricKey; label: string; unit: string; fixedMax: number | null; digits: number }[] = [
-  { key: 'cpuSpread', label: 'Разброс CPU между серверами (макс − мин)', unit: '%', fixedMax: 100, digits: 1 },
-  { key: 'meanCpu', label: 'Средний CPU работающих серверов', unit: '%', fixedMax: 100, digits: 1 },
-  { key: 'maxCpu', label: 'CPU самого загруженного сервера', unit: '%', fixedMax: 100, digits: 1 },
-  { key: 'rps', label: 'RPS — успешные запросы в секунду', unit: '', fixedMax: null, digits: 1 },
-  { key: 'p50Ms', label: 'Задержка p50', unit: 'мс', fixedMax: null, digits: 1 },
-  { key: 'p95Ms', label: 'Задержка p95', unit: 'мс', fixedMax: null, digits: 0 },
-  { key: 'p99Ms', label: 'Задержка p99', unit: 'мс', fixedMax: null, digits: 0 },
-  { key: 'errorPct', label: 'Ошибки', unit: '%', fixedMax: 100, digits: 2 },
+  { key: 'cpuMad', label: 'CPU MAD', unit: '%', fixedMax: 50, digits: 1 },
+  { key: 'rps', label: 'RPS', unit: '', fixedMax: null, digits: 1 },
+  { key: 'p50Ms', label: 'Latency p50', unit: 'ms', fixedMax: null, digits: 1 },
+  { key: 'p95Ms', label: 'Latency p95', unit: 'ms', fixedMax: null, digits: 0 },
+  { key: 'p99Ms', label: 'Latency p99', unit: 'ms', fixedMax: null, digits: 0 },
+  { key: 'errorPct', label: 'Errors', unit: '%', fixedMax: 100, digits: 2 },
 ];
 
 const VIEW_W = 640;
@@ -26,6 +25,13 @@ const MAJOR_TICK = 7;
 const SMOOTH_HALF_WIDTH = 3;
 // Ruler steps in seconds, the smallest that keeps the labels to about ten.
 const MAJOR_STEPS_SEC = [10, 30, 60, 120, 300, 600, 1800, 3600];
+// Chart windows in seconds, the same set as on the server charts.
+const RANGES = [
+  { label: '3 min', sec: 3 * 60 },
+  { label: '10 min', sec: 10 * 60 },
+  { label: '30 min', sec: 30 * 60 },
+  { label: '1 h', sec: 60 * 60 },
+];
 
 export function AlgorithmComparison({
   series,
@@ -35,9 +41,37 @@ export function AlgorithmComparison({
   algorithms: BalancerAlgorithm[];
 }) {
   const [hidden, setHidden] = useState<string[]>([]);
+  // null follows the test: the shortest window that holds the whole run.
+  const [rangeSec, setRangeSec] = useState<number | null>(null);
+  // null follows the latest data, a number is where the scrolled window starts.
+  const [scrollSec, setScrollSec] = useState<number | null>(null);
 
+  const emptyWindowSec = rangeSec ?? RANGES[0].sec;
   if (!series || series.runs.length === 0) {
-    return <p className="load-empty">Прогонов пока нет. Отметьте алгоритмы и нажмите Start.</p>;
+    return (
+      <>
+        <div className="load-chart-range" role="group" aria-label="Chart interval">
+          {RANGES.map((item) => (
+            <button
+              key={item.sec}
+              type="button"
+              aria-pressed={item.sec === emptyWindowSec}
+              onClick={() => setRangeSec(item.sec)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+        <p className="load-empty">No runs yet. Pick algorithms and press Start.</p>
+        <ChartScrollBar
+          total={0}
+          window={emptyWindowSec}
+          start={0}
+          onScroll={setScrollSec}
+          label="Scroll the charts"
+        />
+      </>
+    );
   }
 
   const nameOf = (id: string) => algorithms.find((item) => item.id === id)?.name ?? id;
@@ -49,13 +83,19 @@ export function AlgorithmComparison({
   const shown = series.runs
     .map((run, index) => ({ run, index }))
     .filter(({ run }) => withSamples(run) && !hidden.includes(run.algorithm));
+  const windowSec =
+    rangeSec ?? (RANGES.find((item) => item.sec >= series.durationSec) ?? RANGES[RANGES.length - 1]).sec;
+  // The window ends at the latest sample, like the server charts, and starts at 0 until the test outgrows it.
+  const latestSec = Math.max(0, ...shown.flatMap(({ run }) => (run.samples ?? []).map((sample) => sample.t)));
+  const lastStartSec = Math.max(0, latestSec - windowSec);
+  const windowStartSec = scrollSec === null ? lastStartSec : Math.min(Math.max(scrollSec, 0), lastStartSec);
   const toggle = (id: string) => {
     setHidden((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
   };
 
   return (
     <>
-      <div className="load-chart-range" role="group" aria-label="Алгоритмы на графиках">
+      <div className="load-chart-range" role="group" aria-label="Algorithms on the charts">
         {series.runs.map((run, index) => (
           <button
             key={run.algorithm}
@@ -72,13 +112,25 @@ export function AlgorithmComparison({
           </button>
         ))}
       </div>
+      <div className="load-chart-range" role="group" aria-label="Chart interval">
+        {RANGES.map((item) => (
+          <button
+            key={item.sec}
+            type="button"
+            aria-pressed={item.sec === windowSec}
+            onClick={() => setRangeSec(item.sec)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
       <div className="load-charts">
         {METRICS.map((metric) => (
           <article className="load-chart" key={metric.key}>
             <h3>{metric.label}{metric.unit ? `, ${metric.unit}` : ''}</h3>
             <div className="load-legend">
               {shown.length === 0 ? (
-                <span>Включите алгоритм, чтобы увидеть линию</span>
+                <span>Turn an algorithm on to see its line</span>
               ) : shown.map(({ run, index }) => (
                 <span key={run.algorithm}>
                   <i style={{ background: colorOf(run.algorithm, index) }} />
@@ -90,19 +142,20 @@ export function AlgorithmComparison({
               runs={shown.map(({ run, index }) => ({ run, color: colorOf(run.algorithm, index) }))}
               metric={metric.key}
               fixedMax={metric.fixedMax}
-              durationSec={series.durationSec}
+              windowStartSec={windowStartSec}
+              windowSec={windowSec}
               series={series}
             />
           </article>
         ))}
       </div>
-      <p className="load-copy">
-        По горизонтали минуты теста. Красные полосы — сервер остановлен по расписанию, у всех алгоритмов в одни и те же
-        секунды. Линии сглажены скользящим средним за {SMOOTH_HALF_WIDTH * 2 + 1} с, число в легенде — среднее за прогон
-        по исходным точкам. CPU берётся из Prometheus как скорость за 15 с, поэтому реагирует на остановку сервера с
-        задержкой; RPS, задержки и ошибки стенд считает по окну в 5 с.
-      </p>
-      <SummaryTable series={series} nameOf={nameOf} />
+      <ChartScrollBar
+        total={latestSec}
+        window={windowSec}
+        start={windowStartSec}
+        onScroll={setScrollSec}
+        label="Scroll the charts"
+      />
     </>
   );
 }
@@ -110,13 +163,13 @@ export function AlgorithmComparison({
 function runSuffix(run: SeriesRun): string {
   switch (run.state) {
     case 'running':
-      return ' · идёт';
+      return ' · running';
     case 'pending':
-      return ' · ждёт';
+      return ' · pending';
     case 'failed':
-      return ' · ошибка';
+      return ' · failed';
     case 'stopped':
-      return ' · прерван';
+      return ' · stopped';
     default:
       return '';
   }
@@ -126,13 +179,15 @@ function ComparisonChart({
   runs,
   metric,
   fixedMax,
-  durationSec,
+  windowStartSec,
+  windowSec,
   series,
 }: {
   runs: { run: SeriesRun; color: string }[];
   metric: MetricKey;
   fixedMax: number | null;
-  durationSec: number;
+  windowStartSec: number;
+  windowSec: number;
   series: SeriesStatus;
 }) {
   const plotW = VIEW_W - PAD.left - PAD.right;
@@ -140,18 +195,23 @@ function ComparisonChart({
   const lines = runs.map(({ run, color }) => ({
     id: run.algorithm,
     color,
-    points: smooth(run.samples ?? [], metric),
+    points: smooth(run.samples ?? [], metric).filter(
+      (point) => point.t >= windowStartSec && point.t <= windowStartSec + windowSec,
+    ),
   }));
   const peak = Math.max(0, ...lines.flatMap((line) => line.points.map((point) => point.value)));
   const max = scaleMax(peak, fixedMax);
   const yTicks = [max, max / 2, 0];
   const bottom = PAD.top + plotH;
-  const xOf = (sec: number) => PAD.left + Math.min(Math.max(sec / durationSec, 0), 1) * plotW;
+  const xOf = (sec: number) =>
+    PAD.left + Math.min(Math.max((sec - windowStartSec) / windowSec, 0), 1) * plotW;
   const yOf = (value: number) => PAD.top + plotH - (Math.min(Math.max(value, 0), max) / max) * plotH;
 
   return (
     <svg viewBox={`0 0 ${VIEW_W} ${VIEW_H}`} role="img" aria-label={metric}>
-      {(series.outages ?? []).map((outage) => (
+      {(series.outages ?? [])
+        .filter((outage) => outage.startAtSec > windowStartSec && outage.stopAtSec < windowStartSec + windowSec)
+        .map((outage) => (
         <g key={`${outage.server}-${outage.stopAtSec}`}>
           <rect
             x={xOf(outage.stopAtSec)}
@@ -160,11 +220,13 @@ function ComparisonChart({
             height={plotH}
             className="load-chart-outage"
           >
-            <title>{`${outage.server} остановлен с ${formatSeconds(outage.stopAtSec)} до ${formatSeconds(outage.startAtSec)}`}</title>
+            <title>{`${outage.server} stopped from ${formatSeconds(outage.stopAtSec)} to ${formatSeconds(outage.startAtSec)}`}</title>
           </rect>
-          <text x={xOf(outage.stopAtSec) + 3} y={PAD.top + 10} className="load-chart-outage-label">
-            {`S${outage.server.replace(/\D+/g, '')}`}
-          </text>
+          {outage.stopAtSec >= windowStartSec && (
+            <text x={xOf(outage.stopAtSec) + 3} y={PAD.top + 10} className="load-chart-outage-label">
+              {`S${outage.server.replace(/\D+/g, '')}`}
+            </text>
+          )}
         </g>
       ))}
       {yTicks.map((tick) => (
@@ -175,7 +237,7 @@ function ComparisonChart({
           </text>
         </g>
       ))}
-      {rulerTicks(durationSec).map((tick) => (
+      {rulerTicks(windowStartSec, windowSec).map((tick) => (
         <g key={tick.sec}>
           <line
             x1={xOf(tick.sec)}
@@ -203,85 +265,6 @@ function ComparisonChart({
         />
       ))}
     </svg>
-  );
-}
-
-function SummaryTable({ series, nameOf }: { series: SeriesStatus; nameOf: (id: string) => string }) {
-  const finished = series.runs.filter((run) => run.state === 'done' && run.report);
-  if (finished.length === 0) {
-    return null;
-  }
-  const fullCluster = Math.max(0, ...series.runs.flatMap((run) => (run.samples ?? []).map((sample) => sample.live)));
-  const rows = finished.map((run) => {
-    const samples = run.samples ?? [];
-    const report = run.report as TestMetrics;
-    const together = samples.filter((sample) => sample.live >= 2);
-    const degraded = together.filter((sample) => sample.live < fullCluster);
-    return {
-      run,
-      report,
-      spread: together.length > 0 ? mean(together, 'cpuSpread') : null,
-      spreadDegraded: degraded.length > 0 ? mean(degraded, 'cpuSpread') : null,
-    };
-  });
-  const best = (pick: (row: (typeof rows)[number]) => number | null, higher: boolean) => {
-    const values = rows.map(pick).filter((value): value is number => value !== null);
-    if (rows.length < 2 || values.length === 0) {
-      return null;
-    }
-    return higher ? Math.max(...values) : Math.min(...values);
-  };
-  const columns = [
-    { label: 'RPS ↑', pick: (row: (typeof rows)[number]) => row.report.rps, higher: true, text: (v: number) => v.toFixed(1) },
-    { label: 'p95, мс ↓', pick: (row: (typeof rows)[number]) => row.report.p95Millis ?? 0, higher: false, text: (v: number) => v.toFixed(0) },
-    { label: 'p99, мс ↓', pick: (row: (typeof rows)[number]) => row.report.p99Millis, higher: false, text: (v: number) => v.toFixed(0) },
-    { label: 'Ошибки, % ↓', pick: (row: (typeof rows)[number]) => row.report.errorRatePercent, higher: false, text: (v: number) => v.toFixed(2) },
-    {
-      label: 'CPU fairness ↑',
-      pick: (row: (typeof rows)[number]) => (row.report.cpuFairnessAvailable ? row.report.cpuFairnessIndex : null),
-      higher: true,
-      text: (v: number) => v.toFixed(3),
-    },
-    { label: 'Разброс CPU, % ↓', pick: (row: (typeof rows)[number]) => row.spread, higher: false, text: (v: number) => v.toFixed(1) },
-    {
-      label: 'Разброс CPU при остановленном сервере, % ↓',
-      pick: (row: (typeof rows)[number]) => row.spreadDegraded,
-      higher: false,
-      text: (v: number) => v.toFixed(1),
-    },
-  ];
-
-  return (
-    <div className="load-table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Алгоритм</th>
-            {columns.map((column) => <th key={column.label}>{column.label}</th>)}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.run.algorithm}>
-              <td>{nameOf(row.run.algorithm)}</td>
-              {columns.map((column) => {
-                const value = column.pick(row);
-                const top = best(column.pick, column.higher);
-                return (
-                  <td key={column.label} className={value !== null && value === top ? 'load-best' : ''}>
-                    {value === null ? 'N/A' : column.text(value)}
-                  </td>
-                );
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <p className="load-copy">
-        Жирным выделено лучшее значение в столбце. Каждый алгоритм прошёл тест один раз, поэтому маленькая разница
-        может быть шумом, а не преимуществом.
-      </p>
-    </div>
   );
 }
 
@@ -313,13 +296,13 @@ function scaleMax(peak: number, fixedMax: number | null): number {
 }
 
 // A short tick every half of the labelled step, a long tick with a label at the
-// labelled step; the start of the test has no label. For a ten minute test that is a
-// tick every 30 s and ten labels, one per minute.
-function rulerTicks(durationSec: number): { sec: number; label: string | null }[] {
-  const majorSec = MAJOR_STEPS_SEC.find((step) => durationSec / step <= 10) ?? MAJOR_STEPS_SEC[MAJOR_STEPS_SEC.length - 1];
+// labelled step, both on round test times so they slide left as the window moves.
+// For a ten minute window that is a tick every 30 s and ten labels, one per minute.
+function rulerTicks(startSec: number, windowSec: number): { sec: number; label: string | null }[] {
+  const majorSec = MAJOR_STEPS_SEC.find((step) => windowSec / step <= 10) ?? MAJOR_STEPS_SEC[MAJOR_STEPS_SEC.length - 1];
   const minorSec = majorSec / 2;
   const ticks: { sec: number; label: string | null }[] = [];
-  for (let sec = 0; sec <= durationSec; sec += minorSec) {
+  for (let sec = Math.ceil(startSec / minorSec) * minorSec; sec <= startSec + windowSec; sec += minorSec) {
     ticks.push({ sec, label: sec > 0 && sec % majorSec === 0 ? formatSeconds(sec) : null });
   }
   return ticks;

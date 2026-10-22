@@ -44,14 +44,16 @@ const defaultEnvoyAdminURL = "http://localhost:9901"
 const envoyEndpointStatsPrefix = "cluster.grpc_backend.endpoint."
 
 type TestMetrics struct {
-	RPS                  float64 `json:"rps"`
-	P50Millis            float64 `json:"p50Millis"`
-	P95Millis            float64 `json:"p95Millis"`
-	P99Millis            float64 `json:"p99Millis"`
-	ErrorRatePercent     float64 `json:"errorRatePercent"`
-	CpuFairnessIndex     float64 `json:"cpuFairnessIndex"`
-	CpuFairnessAvailable bool    `json:"cpuFairnessAvailable"`
-	DurationSeconds      float64 `json:"durationSeconds"`
+	RPS              float64 `json:"rps"`
+	P50Millis        float64 `json:"p50Millis"`
+	P95Millis        float64 `json:"p95Millis"`
+	P99Millis        float64 `json:"p99Millis"`
+	ErrorRatePercent float64 `json:"errorRatePercent"`
+	// CPUMADMeanPercent is the same deviation taken every second over the servers that are
+	// up, then averaged over the test, so a short imbalance counts as long as it lasted.
+	CPUMADMeanPercent   float64 `json:"cpuMadMeanPercent"`
+	CPUMADMeanAvailable bool    `json:"cpuMadMeanAvailable"`
+	DurationSeconds     float64 `json:"durationSeconds"`
 }
 
 type envoyEndpointCounters struct {
@@ -126,17 +128,11 @@ func parseEnvoyEndpointCounters(payload envoyStatsResponse) map[string]envoyEndp
 	return result
 }
 
-type cpuSample struct {
-	sum   float64
-	count int
-}
-
 func summarizeTest(
 	successfulRequests int64,
 	failedRequests int64,
 	latencyBuckets []int64,
 	duration time.Duration,
-	cpuUtilizations []float64,
 ) TestMetrics {
 	result := TestMetrics{DurationSeconds: duration.Seconds()}
 	totalRequests := successfulRequests + failedRequests
@@ -149,41 +145,7 @@ func summarizeTest(
 	result.P50Millis = percentileMillis(latencyBuckets, 0.50)
 	result.P95Millis = percentileMillis(latencyBuckets, 0.95)
 	result.P99Millis = percentileMillis(latencyBuckets, 0.99)
-	result.CpuFairnessIndex, result.CpuFairnessAvailable = cpuFairnessIndex(cpuUtilizations)
 	return result
-}
-
-func recordCPUUtilizations(servers []ServerStatus, samples map[string]cpuSample) {
-	if samples == nil {
-		return
-	}
-	for _, server := range servers {
-		if server.Status != "up" || math.IsNaN(server.CPU) || math.IsInf(server.CPU, 0) {
-			continue
-		}
-		utilization := server.CPU / 100
-		if utilization < 0 {
-			utilization = 0
-		}
-		if utilization > 1 {
-			utilization = 1
-		}
-		sample := samples[server.Name]
-		sample.sum += utilization
-		sample.count++
-		samples[server.Name] = sample
-	}
-}
-
-func meanCPUUtilizations(samples map[string]cpuSample) []float64 {
-	utilizations := make([]float64, 0, len(samples))
-	for _, sample := range samples {
-		if sample.count == 0 {
-			continue
-		}
-		utilizations = append(utilizations, sample.sum/float64(sample.count))
-	}
-	return utilizations
 }
 
 func percentileMillis(bucketCounts []int64, percentile float64) float64 {
@@ -220,31 +182,21 @@ func percentileMillis(bucketCounts []int64, percentile float64) float64 {
 	return 0
 }
 
-// cpuFairnessIndex is Jain's index on CPU utilization in [0, 1].
-// 1 means every included server sat at the same fraction of its own limit.
-func cpuFairnessIndex(utilizations []float64) (float64, bool) {
-	if len(utilizations) == 0 {
-		return 0, false
+// meanAbsoluteDeviation is the mean of |x - mean(x)|; an empty list gives 0.
+func meanAbsoluteDeviation(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
 	}
-	var sum, sumSquares float64
-	for _, utilization := range utilizations {
-		if math.IsNaN(utilization) || math.IsInf(utilization, 0) {
-			return 0, false
-		}
-		if utilization < 0 {
-			utilization = 0
-		}
-		if utilization > 1 {
-			utilization = 1
-		}
-		sum += utilization
-		sumSquares += utilization * utilization
+	sum := 0.0
+	for _, value := range values {
+		sum += value
 	}
-	if sumSquares == 0 {
-		return 0, false
+	mean := sum / float64(len(values))
+	deviation := 0.0
+	for _, value := range values {
+		deviation += math.Abs(value - mean)
 	}
-	count := float64(len(utilizations))
-	return sum * sum / (count * sumSquares), true
+	return deviation / float64(len(values))
 }
 
 func latencyBucketIndex(duration time.Duration) int {

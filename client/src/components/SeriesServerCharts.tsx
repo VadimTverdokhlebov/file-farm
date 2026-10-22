@@ -24,9 +24,9 @@ export function SeriesServerCharts({
 
   return (
     <>
-      <div className="load-chart-range" role="group" aria-label="Данные графиков серверов">
+      <div className="load-chart-range" role="group" aria-label="Server chart data">
         <button type="button" aria-pressed={!chosen} onClick={() => setSelected(null)}>
-          Сейчас
+          Now
         </button>
         {runs.map(({ run, index }) => (
           <button
@@ -61,11 +61,11 @@ export function SeriesServerCharts({
 function runLabel(run: SeriesRun): string {
   switch (run.state) {
     case 'running':
-      return ' · идёт';
+      return ' · running';
     case 'pending':
-      return ' · ждёт';
+      return ' · pending';
     case 'failed':
-      return ' · ошибка';
+      return ' · failed';
     default:
       return '';
   }
@@ -81,7 +81,8 @@ function outageBands(series: SeriesStatus, run: SeriesRun): ServerOutageBand[] {
     server: outage.server,
     fromMs: startedAt + outage.stopAtSec * 1000,
     // A server still down when the run ends is started again at that moment.
-    toMs: startedAt + Math.min(outage.startAtSec, series.durationSec) * 1000,
+    // An open-ended run (duration 0) has no end to cut the outage at.
+    toMs: startedAt + (series.durationSec > 0 ? Math.min(outage.startAtSec, series.durationSec) : outage.startAtSec) * 1000,
   }));
 }
 
@@ -109,7 +110,7 @@ function SavedRunCharts({
       })
       .catch((err: unknown) => {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Не удалось загрузить данные прогона');
+          setError(err instanceof Error ? err.message : 'Failed to load run data');
         }
       });
     return () => {
@@ -121,16 +122,16 @@ function SavedRunCharts({
     return <p className="load-notice load-notice-error">{error}</p>;
   }
   if (!history) {
-    return <p className="load-empty">Загрузка сохранённых данных…</p>;
+    return <p className="load-empty">Loading saved data…</p>;
   }
   if (history.length === 0) {
-    return <p className="load-empty">У этого прогона нет сохранённых данных серверов.</p>;
+    return <p className="load-empty">This run has no saved server data.</p>;
   }
   return (
     <>
       <p className="load-copy">
-        Сохранённые данные прогона{run.startedAtMs ? `, начало ${formatStart(run.startedAtMs)}` : ''}. Они не меняются,
-        время на оси — время, когда прогон шёл.
+        Saved run data{run.startedAtMs ? `, started at ${formatStart(run.startedAtMs)}` : ''}. The axis shows the time
+        when the run took place.
       </p>
       <ServerCharts history={history} initialRangeMs={rangeMsFor(durationSec * 1000)} outages={outages} />
     </>
@@ -144,5 +145,5 @@ function rangeMsFor(durationMs: number): number {
 }
 
 function formatStart(timestamp: number): string {
-  return new Date(timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return new Date(timestamp).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }

@@ -1,28 +1,40 @@
-import { useState, useEffect, useRef } from 'react';
+import { Fragment, useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '../components/Button';
 import { AlgorithmComparison } from '../components/AlgorithmComparison';
 import { SeriesServerCharts } from '../components/SeriesServerCharts';
-import { ServerCharts } from '../components/ServerCharts';
-import { liveOutageBands } from '../components/liveOutages';
-import { ScenarioPhase, maxTestFileSizeKb, scenarioById, scenarioValues, trainingScenarios, trainingServerNames } from '../config/trainingScenarios';
+import {
+  ScheduledOutage,
+  maxTestFileSizeKb,
+  testEndpoints,
+  testPresets,
+  testWarmupFiles,
+  trainingServerNames,
+} from '../config/loadTestConfig';
 import { useLoadTest } from '../hooks/useLoadTest';
 import { SeriesStatus, TestMetrics } from '../types/loadTest';
 import './LoadTestPage.css';
 
-// Pause between two runs of a comparison; the load stand waits this long before the next algorithm.
+// Pause between two runs; the load stand waits this long before the next algorithm.
 const seriesCooldownSec = 45;
-const comparisonScenario = trainingScenarios.find((item) => item.comparison) ?? trainingScenarios[0];
+
+// Values of a page without a preset.
+// The algorithm a new page starts with.
+const defaultAlgorithmId = 'am_ppo';
+
+const defaultValues = {
+  concurrency: 28,
+  duration: 180,
+  fileSizeMinKb: 512,
+  fileSizeMaxKb: 512,
+};
 
 export const LoadTestPage = () => {
   const {
     endpoints,
     algorithms,
-    selectedAlgorithm,
-    setSelectedAlgorithm,
     status,
     serverHistory,
-    startTest,
     startSeries,
     series,
     seriesResults,
@@ -32,188 +44,137 @@ export const LoadTestPage = () => {
     error,
     isLoading,
   } = useLoadTest();
-  const initialScenario = trainingScenarios[0];
-  const [scenarioId, setScenarioId] = useState(initialScenario.id);
-  // The first preset is on by default: its values are what a new page starts with.
-  const [quickPresetId, setQuickPresetId] = useState<string | null>(initialScenario.quickPresets?.[0]?.id ?? null);
-  const initialValues = scenarioValues(initialScenario, quickPresetId);
-  const [concurrency, setConcurrency] = useState(initialValues.concurrency);
-  const [duration, setDuration] = useState(initialValues.duration);
-  const [fileSizeMinKb, setFileSizeMinKb] = useState(initialValues.fileSizeMinKb);
-  const [fileSizeMaxKb, setFileSizeMaxKb] = useState(initialValues.fileSizeMaxKb);
-  const [outageServers, setOutageServers] = useState<string[]>(initialScenario.outageServers);
-  const [outageMinSec, setOutageMinSec] = useState(initialScenario.outageMinSec);
-  const [outageMaxSec, setOutageMaxSec] = useState(initialScenario.outageMaxSec);
-  const [waveIterations, setWaveIterations] = useState(initialScenario.waveIterations);
-  const [phases, setPhases] = useState<ScenarioPhase[]>(initialScenario.phases);
-  const [freezeModel, setFreezeModel] = useState(false);
+  // No preset is on by default: a new page starts with the default values and no outages.
+  const [presetId, setPresetId] = useState<string | null>(null);
+  const [concurrency, setConcurrency] = useState(defaultValues.concurrency);
+  const [duration, setDuration] = useState(defaultValues.duration);
+  const [durationUnit, setDurationUnit] = useState<DurationUnit>('s');
+  const [fileSizeMinKb, setFileSizeMinKb] = useState(defaultValues.fileSizeMinKb);
+  const [fileSizeMaxKb, setFileSizeMaxKb] = useState(defaultValues.fileSizeMaxKb);
+  const [fileSizeUnit, setFileSizeUnit] = useState<FileSizeUnit>('KB');
+  const [outageUnit, setOutageUnit] = useState<DurationUnit>('s');
+  const [outages, setOutages] = useState<ScheduledOutage[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
-  // Algorithms ticked for a comparison; until the first click every algorithm is in.
+  // Algorithms of the test, one select per row; until the first change only AM-PPO is in.
   const [comparedAlgorithms, setComparedAlgorithms] = useState<string[] | null>(null);
   // A frozen AM-PPO keeps the comparison fair: the model does not change between runs.
   const [compareFreeze, setCompareFreeze] = useState(true);
-  const scenario = scenarioById(scenarioId);
   const seriesActive = series?.active ?? false;
   const busy = status.isRunning || seriesActive;
-  const compareIds = (comparedAlgorithms ?? algorithms.map((algorithm) => algorithm.id))
+  const compareIds = (comparedAlgorithms ?? [defaultAlgorithmId])
     .filter((id) => algorithms.some((algorithm) => algorithm.id === id));
-  // A preset with a schedule replaces the random outages.
-  const activeOutages = scenarioValues(scenario, quickPresetId).outages;
+  const unusedAlgorithms = algorithms.filter((algorithm) => !compareIds.includes(algorithm.id));
 
-  // After a reload in the middle of a series, show the page the series belongs to.
-  const openedSeries = useRef(false);
+  // After a reload in the middle of a series, the form shows what the series was started with.
+  const restoredSeries = useRef(false);
   useEffect(() => {
-    if (seriesActive && !openedSeries.current) {
-      openedSeries.current = true;
-      applyScenario(comparisonScenario.id);
+    if (!seriesActive || !series || restoredSeries.current) {
+      return;
     }
-    // applyScenario only sets state, so the first sight of an active series is enough.
+    restoredSeries.current = true;
+    setPresetId(null);
+    setDuration(series.durationSec);
+    setOutages(series.outages ?? []);
+    setComparedAlgorithms(series.runs.map((run) => run.algorithm));
+    setCompareFreeze(series.freezeModel);
+    // Only the first sight of an active series matters; later updates must not overwrite edits.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seriesActive]);
 
-  useEffect(() => {
-    if (algorithms.length > 0 && !selectedAlgorithm) {
-      setSelectedAlgorithm(algorithms[0].id);
-    }
-  }, [algorithms, selectedAlgorithm, setSelectedAlgorithm]);
-
   const handleStart = () => {
     if (endpoints.length === 0) {
-      setFormError('Нет доступных методов. Проверьте, что стенд нагрузки запущен.');
+      setFormError('No methods available. Check that the load stand is running.');
       return;
     }
-    if (scenario.comparison && compareIds.length === 0) {
-      setFormError('Отметьте хотя бы один алгоритм для сравнения.');
+    if (compareIds.length === 0) {
+      setFormError('Select at least one algorithm.');
       return;
     }
-    if (!scenario.comparison && !selectedAlgorithm) {
-      setFormError('Выберите алгоритм балансировки.');
+    if (concurrency < 1) {
+      setFormError('At least one client is required.');
       return;
     }
-    if (scenario.comparison && duration < 1) {
-      setFormError('Для сравнения нужна длительность теста в секундах: 0 означает тест без конца.');
+    if (duration < 0) {
+      setFormError('Duration cannot be negative. 0 means no time limit.');
       return;
     }
-    if (phases.length > 0) {
-      const invalidPhase = phases.find((phase) => (
-        phase.concurrency < 1
-        || phase.durationSec < 5
-        || phase.fileSizeMinKb < 1
-        || phase.fileSizeMaxKb < phase.fileSizeMinKb
-        || phase.fileSizeMaxKb > maxTestFileSizeKb
-      ));
-      if (invalidPhase) {
-        setFormError(`В каждой волне нужен хотя бы 1 клиент, длительность от 5 секунд и размер файла от 1 до ${maxTestFileSizeKb} КБ.`);
-        return;
-      }
-    } else if (fileSizeMinKb < 1 || fileSizeMaxKb < fileSizeMinKb || fileSizeMaxKb > maxTestFileSizeKb) {
-      setFormError(`Размер файла должен быть от 1 до ${maxTestFileSizeKb} КБ, минимум не может быть больше максимума.`);
+    if (duration === 0 && compareIds.length !== 1) {
+      setFormError('A test without a time limit (0) takes one algorithm only: algorithms take turns by time.');
       return;
     }
-    const waveDuration = phases.reduce((total, phase) => total + phase.durationSec, 0);
-    const plannedDuration = phases.length > 0 ? (waveIterations === 0 ? 0 : waveDuration * waveIterations) : duration;
-    if (phases.length > 0 && waveIterations < 0) {
-      setFormError('Число повторов круга не может быть отрицательным. 0 означает без конца.');
+    if (fileSizeMinKb < 1 || fileSizeMaxKb < fileSizeMinKb || fileSizeMaxKb > maxTestFileSizeKb) {
+      setFormError(`File size must be 1 to ${maxTestFileSizeKb} KB, the minimum cannot exceed the maximum.`);
       return;
     }
-    const outagePlan = scenarioValues(scenario, quickPresetId).outages;
-    if (outagePlan && plannedDuration > 0) {
-      // The schedule is in seconds of the test, so a shorter run would never reach it.
-      const unreachable = outagePlan.find((outage) => outage.stopAtSec >= plannedDuration);
-      if (unreachable) {
-        setFormError(`Длительность теста ${plannedDuration} с меньше времени остановки сервера по расписанию. Верните 600 секунд или снимите отметку.`);
-        return;
-      }
-    }
-    if (scenario.randomOutages && !outagePlan) {
-      if (outageServers.length === 0) {
-        setFormError('Отметьте хотя бы один сервер, который может остановиться.');
-        return;
-      }
-      if (outageMinSec < 5 || outageMaxSec < outageMinSec || (plannedDuration > 0 && outageMinSec >= plannedDuration)) {
-        setFormError('Диапазон остановки — от 5 секунд, максимум не меньше минимума и минимум меньше длительности теста.');
-        return;
-      }
+    const outageError = outageProblem(outages, duration);
+    if (outageError) {
+      setFormError(outageError);
+      return;
     }
 
     setFormError(null);
-    const config = {
-      concurrency: phases.length > 0 ? phases[0].concurrency : concurrency,
-      duration: plannedDuration,
-      endpoints: scenario.endpoints,
-      algorithm: selectedAlgorithm,
-      freezeModel: selectedAlgorithm === 'am_ppo' ? freezeModel : false,
-      preset: scenario.id,
-      fileSizeMinKb: phases.length > 0 ? phases[0].fileSizeMinKb : fileSizeMinKb,
-      fileSizeMaxKb: phases.length > 0 ? phases[0].fileSizeMaxKb : fileSizeMaxKb,
-      warmupFiles: scenario.warmupFiles,
-      outageServers: scenario.randomOutages && !outagePlan ? outageServers : undefined,
-      outageMinSec: scenario.randomOutages && !outagePlan ? outageMinSec : undefined,
-      outageMaxSec: scenario.randomOutages && !outagePlan ? outageMaxSec : undefined,
-      outagePlan,
-      waveIterations: phases.length > 0 ? waveIterations : undefined,
-      phases: phases.length > 0 ? phases : undefined,
-    };
-    if (scenario.comparison) {
-      startSeries({
-        ...config,
-        algorithm: '',
-        algorithms: compareIds,
-        freezeModel: compareFreeze,
-        cooldownSec: seriesCooldownSec,
-      });
-      return;
-    }
-    startTest(config);
+    startSeries({
+      concurrency,
+      duration,
+      endpoints: testEndpoints,
+      algorithm: '',
+      algorithms: compareIds,
+      freezeModel: compareFreeze,
+      cooldownSec: seriesCooldownSec,
+      preset: presetId ?? 'custom',
+      fileSizeMinKb,
+      fileSizeMaxKb,
+      warmupFiles: testWarmupFiles,
+      outagePlan: outages.length > 0 ? outages : undefined,
+    });
   };
 
-  const applyValues = (values: ReturnType<typeof scenarioValues>) => {
+  // Checking one preset unchecks the other; unchecking returns the default values without outages.
+  const togglePreset = (id: string, enabled: boolean) => {
+    const preset = enabled ? testPresets.find((item) => item.id === id) : undefined;
+    const values = preset ?? defaultValues;
+    setPresetId(preset?.id ?? null);
     setConcurrency(values.concurrency);
     setDuration(values.duration);
     setFileSizeMinKb(values.fileSizeMinKb);
     setFileSizeMaxKb(values.fileSizeMaxKb);
-  };
-
-  // Checking one preset unchecks the other; unchecking returns the scenario defaults.
-  const toggleQuickPreset = (id: string, enabled: boolean) => {
-    const nextId = enabled ? id : null;
-    setQuickPresetId(nextId);
-    applyValues(scenarioValues(scenario, nextId));
+    setOutages(preset ? preset.outages.map((outage) => ({ ...outage })) : []);
     setFormError(null);
   };
 
-  const applyScenario = (id: string) => {
-    const next = scenarioById(id);
-    // Like on first load, the first preset of a scenario is on by default.
-    const nextPresetId = next.quickPresets?.[0]?.id ?? null;
-    setScenarioId(next.id);
-    setQuickPresetId(nextPresetId);
-    applyValues(scenarioValues(next, nextPresetId));
-    setOutageServers(next.outageServers);
-    setOutageMinSec(next.outageMinSec);
-    setOutageMaxSec(next.outageMaxSec);
-    setWaveIterations(next.waveIterations);
-    setPhases(next.phases);
-    setFormError(null);
+  const addAlgorithm = () => {
+    if (unusedAlgorithms.length > 0) {
+      setComparedAlgorithms([...compareIds, unusedAlgorithms[0].id]);
+    }
   };
 
-  const toggleComparedAlgorithm = (id: string) => {
-    setComparedAlgorithms(compareIds.includes(id) ? compareIds.filter((item) => item !== id) : [...compareIds, id]);
+  const changeAlgorithm = (index: number, id: string) => {
+    setComparedAlgorithms(compareIds.map((item, position) => (position === index ? id : item)));
   };
 
-  const toggleOutageServer = (name: string) => {
-    setOutageServers((current) => (
-      current.includes(name) ? current.filter((item) => item !== name) : [...current, name]
-    ));
+  const removeAlgorithm = (index: number) => {
+    setComparedAlgorithms(compareIds.filter((_, position) => position !== index));
   };
 
-  const updatePhase = (index: number, patch: Partial<ScenarioPhase>) => {
-    setPhases((current) => current.map((phase, phaseIndex) => (
-      phaseIndex === index ? { ...phase, ...patch } : phase
+  const updateOutage = (index: number, patch: Partial<ScheduledOutage>) => {
+    setOutages((current) => current.map((outage, position) => (
+      position === index ? { ...outage, ...patch } : outage
     )));
   };
 
-  const waveDuration = phases.reduce((total, phase) => total + phase.durationSec, 0);
+  const addOutage = () => {
+    // A free server first, so a new row does not repeat the server of the previous one.
+    const free = trainingServerNames.find((name) => !outages.some((outage) => outage.server === name));
+    setOutages((current) => current.concat({
+      server: free ?? trainingServerNames[0],
+      stopAtSec: 60,
+      startAtSec: 120,
+    }));
+  };
+
+  const removeOutage = (index: number) => {
+    setOutages((current) => current.filter((_, position) => position !== index));
+  };
 
   const servers = status.stats.Servers ?? [];
   const endpointEntries = Object.entries(status.stats.endpointStats ?? {});
@@ -223,236 +184,188 @@ export const LoadTestPage = () => {
       <div className="load-shell">
         <header className="load-header">
           <div>
-            <p className="load-kicker">File Farm</p>
-            <h1>Load test</h1>
-            <p className="load-lead">
-              Configure a run for testing and learning. Every available request is used, and files created by the test are deleted afterwards.
-            </p>
+            <h1>Load panel</h1>
           </div>
           <Link className="load-nav" to="/">Files</Link>
         </header>
 
         <section className="load-card">
-          <h2>Сценарии обучения</h2>
-          <p className="load-copy">
-            Каждый сценарий вызывает загрузку, скачивание, удаление, сжатие, создание и чтение пользователя. Размер файла не превышает лимит сообщения сервера, {maxTestFileSizeKb} КБ. Один и тот же прогон стоит запустить с AM-PPO и с классическим алгоритмом.
-          </p>
-          <div className="load-scenarios">
-            {trainingScenarios.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className={`load-scenario ${item.id === scenarioId ? 'load-scenario-active' : ''}`}
-                onClick={() => applyScenario(item.id)}
-                disabled={busy}
-              >
-                <strong>{item.name}</strong>
-                <span>{item.summary}</span>
-              </button>
+          <h2>Presets</h2>
+          <div className="load-weakness">
+            {testPresets.map((item) => (
+              <label className="load-check" htmlFor={item.id} key={item.id}>
+                <input
+                  id={item.id}
+                  type="checkbox"
+                  checked={presetId === item.id}
+                  disabled={busy}
+                  onChange={(event) => togglePreset(item.id, event.target.checked)}
+                />
+                {item.label}
+              </label>
             ))}
           </div>
-          {scenario.quickPresets ? (
-            <div className="load-weakness" title={scenario.weakness}>
-              {scenario.quickPresets.map((item) => (
-                <label className="load-check" htmlFor={item.id} key={item.id}>
-                  <input
-                    id={item.id}
-                    type="checkbox"
-                    checked={quickPresetId === item.id}
-                    disabled={busy}
-                    onChange={(event) => toggleQuickPreset(item.id, event.target.checked)}
-                  />
-                  {item.label}
-                </label>
-              ))}
-            </div>
-          ) : (
-            <p className="load-weakness">{scenario.weakness}</p>
-          )}
-          {phases.length > 0 ? (
-            <>
-              <div className="load-fields">
-                <NumberField
-                  id="waveIterations"
-                  label="Повторы круга"
-                  min={0}
-                  value={waveIterations}
-                  disabled={busy}
-                  onChange={setWaveIterations}
-                />
-              </div>
-              <p className="load-copy">
-                Один круг длится {waveDuration} с. 0 повторов — круги без конца.
-                {waveIterations > 0 ? ` Всего ${waveDuration * waveIterations} с.` : ' Тест идёт, пока не нажмёте Stop.'}
-              </p>
-              <div className="load-phases">
-                {phases.map((phase, index) => (
-                  <div className="load-phase" key={`${scenario.id}-${index}`}>
-                    <h3>{phase.name ?? `Волна ${index + 1}`}</h3>
-                    <NumberField
-                      id={`phase-${index}-concurrency`}
-                      label="Клиенты"
-                      min={1}
-                      value={phase.concurrency}
-                      disabled={busy}
-                      onChange={(value) => updatePhase(index, { concurrency: value })}
-                    />
-                    <NumberField
-                      id={`phase-${index}-duration`}
-                      label="Секунды"
-                      min={5}
-                      value={phase.durationSec}
-                      disabled={busy}
-                      onChange={(value) => updatePhase(index, { durationSec: value })}
-                    />
-                    <NumberField
-                      id={`phase-${index}-min`}
-                      label="Мин. размер, КБ"
-                      min={1}
-                      max={maxTestFileSizeKb}
-                      value={phase.fileSizeMinKb}
-                      disabled={busy}
-                      onChange={(value) => updatePhase(index, { fileSizeMinKb: value })}
-                    />
-                    <NumberField
-                      id={`phase-${index}-max`}
-                      label="Макс. размер, КБ"
-                      min={1}
-                      max={maxTestFileSizeKb}
-                      value={phase.fileSizeMaxKb}
-                      disabled={busy}
-                      onChange={(value) => updatePhase(index, { fileSizeMaxKb: value })}
-                    />
-                  </div>
-                ))}
-              </div>
-            </>
-          ) : (
-            <div className="load-fields">
-              <NumberField
-                id="concurrency"
-                label="Одновременные клиенты"
-                min={1}
-                value={concurrency}
-                disabled={busy}
-                onChange={setConcurrency}
-              />
-              <NumberField
-                id="duration"
-                label="Длительность, секунды"
-                min={0}
-                value={duration}
-                disabled={busy}
-                onChange={setDuration}
-              />
-              <NumberField
-                id="fileSizeMinKb"
-                label="Минимальный размер файла, КБ"
-                min={1}
-                max={maxTestFileSizeKb}
-                value={fileSizeMinKb}
-                disabled={busy}
-                onChange={setFileSizeMinKb}
-              />
-              <NumberField
-                id="fileSizeMaxKb"
-                label="Максимальный размер файла, КБ"
-                min={1}
-                max={maxTestFileSizeKb}
-                value={fileSizeMaxKb}
-                disabled={busy}
-                onChange={setFileSizeMaxKb}
-              />
-            </div>
-          )}
-          {scenario.randomOutages && !activeOutages && (
-            <OutageFields
-              servers={outageServers}
-              minSec={outageMinSec}
-              maxSec={outageMaxSec}
-              disabled={busy}
-              onToggle={toggleOutageServer}
-              onMinChange={setOutageMinSec}
-              onMaxChange={setOutageMaxSec}
-            />
-          )}
-          {phases.length === 0 && (
-            <p className="load-copy">0 секунд — тест идёт, пока не нажмёте Stop.</p>
-          )}
 
-          {scenario.comparison ? (
-            <>
-              <div className="load-fields">
-                <fieldset className="load-field load-field-wide" disabled={busy || isLoading}>
-                  <legend>Алгоритмы для сравнения</legend>
-                  <div className="load-checks">
-                    {algorithms.map((algorithm) => (
-                      <label className="load-check" key={algorithm.id}>
-                        <input
-                          type="checkbox"
-                          checked={compareIds.includes(algorithm.id)}
-                          onChange={() => toggleComparedAlgorithm(algorithm.id)}
-                        />
-                        {algorithm.name}
-                      </label>
-                    ))}
-                  </div>
-                </fieldset>
-                {compareIds.includes('am_ppo') && (
-                  <label className="load-check load-field-wide" htmlFor="compareFreeze">
-                    <input
-                      id="compareFreeze"
-                      type="checkbox"
-                      checked={compareFreeze}
-                      disabled={busy}
-                      onChange={(event) => setCompareFreeze(event.target.checked)}
-                    />
-                    Не обучать модель AM-PPO во время сравнения
-                  </label>
-                )}
-              </div>
-              <p className="load-copy">
-                Алгоритмы идут по очереди, между прогонами пауза {seriesCooldownSec} секунд и проверка, что все серверы
-                работают. {compareIds.length > 0 && duration > 0
-                  ? `Всего примерно ${formatSeriesEstimate(compareIds.length, duration)}.`
-                  : ''}
-              </p>
-            </>
-          ) : (
-            <>
-              <div className="load-fields">
-                <label className="load-field load-field-wide" htmlFor="algorithm">
-                  Алгоритм балансировки
+          <h3 className="load-subtitle">Load</h3>
+          <div className="load-fields load-unit-fields">
+            <NumberField
+              id="concurrency"
+              label="Concurrent clients"
+              min={1}
+              value={concurrency}
+              disabled={busy}
+              onChange={setConcurrency}
+            />
+            <MeasuredField
+              id="duration"
+              label="Duration"
+              min={0}
+              value={fromSeconds(duration, durationUnit)}
+              disabled={busy}
+              onChange={(value) => setDuration(toSeconds(value, durationUnit))}
+            />
+            <UnitSwitch
+              units={DURATION_UNITS}
+              value={durationUnit}
+              disabled={busy}
+              label="Duration unit"
+              onChange={setDurationUnit}
+            />
+            <MeasuredField
+              id="fileSizeMinKb"
+              label="Min file size"
+              min={fromKb(1, fileSizeUnit)}
+              max={fromKb(maxTestFileSizeKb, fileSizeUnit)}
+              value={fromKb(fileSizeMinKb, fileSizeUnit)}
+              disabled={busy}
+              onChange={(value) => setFileSizeMinKb(toKb(value, fileSizeUnit))}
+            />
+            <MeasuredField
+              id="fileSizeMaxKb"
+              label="Max file size"
+              min={fromKb(1, fileSizeUnit)}
+              max={fromKb(maxTestFileSizeKb, fileSizeUnit)}
+              value={fromKb(fileSizeMaxKb, fileSizeUnit)}
+              disabled={busy}
+              onChange={(value) => setFileSizeMaxKb(toKb(value, fileSizeUnit))}
+            />
+            <UnitSwitch
+              units={FILE_SIZE_UNITS}
+              value={fileSizeUnit}
+              disabled={busy}
+              label="File size unit"
+              onChange={setFileSizeUnit}
+            />
+          </div>
+
+          <h3 className="load-subtitle">Server outages</h3>
+          <div className="load-fields load-outage-fields">
+            {outages.map((outage, index) => (
+              <Fragment key={index}>
+                <label className="load-field" htmlFor={`outage-${index}-server`}>
+                  {index === 0 ? 'Server' : null}
                   <select
-                    id="algorithm"
-                    value={selectedAlgorithm}
-                    onChange={(event) => setSelectedAlgorithm(event.target.value)}
-                    disabled={busy || isLoading}
+                    id={`outage-${index}-server`}
+                    value={outage.server}
+                    disabled={busy}
+                    aria-label="Server"
+                    onChange={(event) => updateOutage(index, { server: event.target.value })}
                   >
-                    {algorithms.map((algorithm) => (
-                      <option key={algorithm.id} value={algorithm.id}>{algorithm.name}</option>
+                    {trainingServerNames.map((name) => (
+                      <option key={name} value={name}>
+                        {serverLabel(name)}
+                      </option>
                     ))}
                   </select>
                 </label>
-                {selectedAlgorithm === 'am_ppo' && (
-                  <label className="load-check load-field-wide" htmlFor="freezeModel">
-                    <input
-                      id="freezeModel"
-                      type="checkbox"
-                      checked={freezeModel}
-                      disabled={busy}
-                      onChange={(event) => setFreezeModel(event.target.checked)}
-                    />
-                    Не обучать модель во время теста
-                  </label>
+                <MeasuredField
+                  id={`outage-${index}-stop`}
+                  label="Stop at"
+                  hideLabel={index > 0}
+                  min={0}
+                  value={fromSeconds(outage.stopAtSec, outageUnit)}
+                  disabled={busy}
+                  onChange={(value) => updateOutage(index, { stopAtSec: toSeconds(value, outageUnit) })}
+                />
+                <MeasuredField
+                  id={`outage-${index}-start`}
+                  label="Start at"
+                  hideLabel={index > 0}
+                  min={0}
+                  value={fromSeconds(outage.startAtSec, outageUnit)}
+                  disabled={busy}
+                  onChange={(value) => updateOutage(index, { startAtSec: toSeconds(value, outageUnit) })}
+                />
+                {index === 0 ? (
+                  <UnitSwitch
+                    units={DURATION_UNITS}
+                    value={outageUnit}
+                    disabled={busy}
+                    label="Outage unit"
+                    onChange={setOutageUnit}
+                  />
+                ) : (
+                  <div />
                 )}
-              </div>
-              {selectedAlgorithm === 'am_ppo' && freezeModel && (
-                <p className="load-copy">
-                  Модель только балансирует: без шума исследования, без накопления переходов и обновления весов.
-                </p>
-              )}
-            </>
+                <Button variant="secondary" disabled={busy} onClick={() => removeOutage(index)}>
+                  Remove
+                </Button>
+              </Fragment>
+            ))}
+          </div>
+          <div className="load-actions">
+            <Button variant="secondary" disabled={busy || outages.length >= trainingServerNames.length * 2} onClick={addOutage}>
+              Add outage
+            </Button>
+          </div>
+
+          <h3 className="load-subtitle">Algorithms</h3>
+          <div className="load-fields load-algorithm-fields">
+            {compareIds.map((id, index) => (
+              <Fragment key={id}>
+                <label className="load-field" htmlFor={`algorithm-${index}`}>
+                  <select
+                    id={`algorithm-${index}`}
+                    value={id}
+                    disabled={busy || isLoading}
+                    aria-label="Algorithm"
+                    onChange={(event) => changeAlgorithm(index, event.target.value)}
+                  >
+                    {algorithms
+                      .filter((algorithm) => algorithm.id === id || !compareIds.includes(algorithm.id))
+                      .map((algorithm) => (
+                        <option key={algorithm.id} value={algorithm.id}>
+                          {algorithm.name}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <Button
+                  variant="secondary"
+                  disabled={busy || compareIds.length <= 1}
+                  onClick={() => removeAlgorithm(index)}
+                >
+                  Remove
+                </Button>
+              </Fragment>
+            ))}
+          </div>
+          <div className="load-actions">
+            <Button variant="secondary" disabled={busy || isLoading || unusedAlgorithms.length === 0} onClick={addAlgorithm}>
+              Add algorithm
+            </Button>
+          </div>
+          {compareIds.includes('am_ppo') && (
+            <label className="load-check" htmlFor="compareFreeze">
+              <input
+                id="compareFreeze"
+                type="checkbox"
+                checked={!compareFreeze}
+                disabled={busy}
+                onChange={(event) => setCompareFreeze(!event.target.checked)}
+              />
+              Learning
+            </label>
           )}
 
           <div className="load-actions">
@@ -474,36 +387,26 @@ export const LoadTestPage = () => {
             </span>
           </div>
           {error && <p className="load-notice load-notice-error">{error}</p>}
-          {scenario.comparison && series?.message && (
+          {series?.message && (
             <p className="load-notice load-notice-error">{series.message}</p>
           )}
           <div className="load-stats">
-            {scenario.comparison && series && (
+            {series && (
               <>
                 <div>
-                  <span>Алгоритм</span>
+                  <span>Algorithm</span>
                   <strong>{currentAlgorithmName(series, algorithms)}</strong>
                 </div>
                 <div>
-                  <span>Прогон</span>
+                  <span>Run</span>
                   <strong>{series.current + 1} / {series.runs.length}</strong>
-                </div>
-                <div>
-                  <span>Этап</span>
-                  <strong>{seriesPhaseLabel(series)}</strong>
                 </div>
               </>
             )}
             <div>
-              <span>Время</span>
-              <strong>{formatElapsed(status)}</strong>
+              <span>Time</span>
+              <strong>{formatClock(series?.elapsedSec ?? 0)}</strong>
             </div>
-            {(status.stats.waveCount || 0) > 0 && (
-              <div>
-                <span>Итерация волн</span>
-                <strong>{formatWaveProgress(status.stats)}</strong>
-              </div>
-            )}
             <div>
               <span>Successful requests</span>
               <strong>{status.stats.successfulRequests || 0}</strong>
@@ -513,15 +416,11 @@ export const LoadTestPage = () => {
               <strong>{status.stats.failedRequests || 0}</strong>
             </div>
           </div>
+        </section>
 
-          {scenario.comparison ? (
-            // A finished run keeps its report, so each algorithm adds a block below the previous ones.
-            comparisonReports(series, algorithms, status.stats.report).map((item) => (
-              <ReportBlock key={item.key} title={`Test report · ${item.name}`} report={item.report} />
-            ))
-          ) : (
-            status.stats.report && <ReportBlock title="Test report" report={status.stats.report} />
-          )}
+        <section className="load-card">
+          <h2>Test report</h2>
+          <ReportTable rows={reportRows(series, algorithms, status.stats.report)} />
         </section>
 
         <section className="load-card">
@@ -547,7 +446,7 @@ export const LoadTestPage = () => {
                   const pending = pendingServer === server.name;
                   return (
                   <tr key={server.name} className={server.status === 'up' ? '' : 'load-row-down'}>
-                    <td>{server.name}</td>
+                    <td>{serverLabel(server.name)}</td>
                     <td>{server.rps?.toFixed(1) || '0.0'}</td>
                     <td className={(server.error || 0) > 0 ? 'load-danger' : ''}>
                       {server.error?.toFixed(2) || '0.0'}%
@@ -579,28 +478,14 @@ export const LoadTestPage = () => {
         </section>
 
         <section className="load-card">
-          <h2>Графики серверов</h2>
-          <p className="load-copy">
-            На каждом графике своя линия для каждого сервера. Интервал один для всех графиков, с началом теста история очищается.
-            {scenario.comparison ? ' Можно открыть сохранённые данные одного из прошедших алгоритмов.' : ''}
-          </p>
-          {scenario.comparison ? (
-            <SeriesServerCharts series={series} algorithms={algorithms} liveHistory={serverHistory} />
-          ) : (
-            <ServerCharts history={serverHistory} outages={liveOutageBands(serverHistory)} />
-          )}
+          <h2>Server charts</h2>
+          <SeriesServerCharts series={series} algorithms={algorithms} liveHistory={serverHistory} />
         </section>
 
-        {scenario.comparison && (
-          <section className="load-card">
-            <h2>Графики сравнения алгоритмов</h2>
-            <p className="load-copy">
-              Каждый алгоритм — своя линия на общих графиках. Кнопки включают и выключают уже прошедшие алгоритмы,
-              линия идущего прогона растёт по мере теста. Данные хранит стенд нагрузки, после обновления страницы они остаются.
-            </p>
-            <AlgorithmComparison series={seriesResults} algorithms={algorithms} />
-          </section>
-        )}
+        <section className="load-card">
+          <h2>Algorithm comparison charts</h2>
+          <AlgorithmComparison series={seriesResults} algorithms={algorithms} />
+        </section>
 
         <section className="load-card">
           <h2>Per endpoint</h2>
@@ -634,70 +519,45 @@ export const LoadTestPage = () => {
   );
 };
 
-function OutageFields({
-  servers,
-  minSec,
-  maxSec,
-  disabled,
-  onToggle,
-  onMinChange,
-  onMaxChange,
-}: {
-  servers: string[];
-  minSec: number;
-  maxSec: number;
-  disabled: boolean;
-  onToggle: (name: string) => void;
-  onMinChange: (value: number) => void;
-  onMaxChange: (value: number) => void;
-}) {
-  return (
-    <>
-      <p className="load-copy">
-        Случайный отмеченный сервер останавливается, затем через случайное время из диапазона запускается снова.
-        Следующая остановка ждёт новое случайное время из того же диапазона. Если отмечено несколько серверов, последний работающий не выключается.
-        В конце теста остановленный сервер запускается.
-      </p>
-      <div className="load-fields">
-        <NumberField
-          id="outageMinSec"
-          label="Пауза от, секунды"
-          min={5}
-          value={minSec}
-          disabled={disabled}
-          onChange={onMinChange}
-        />
-        <NumberField
-          id="outageMaxSec"
-          label="Пауза до, секунды"
-          min={5}
-          value={maxSec}
-          disabled={disabled}
-          onChange={onMaxChange}
-        />
-        <fieldset className="load-field load-field-wide" disabled={disabled}>
-          <legend>Серверы, которые могут упасть</legend>
-          <div className="load-checks">
-            {trainingServerNames.map((name) => (
-              <label className="load-check" key={name}>
-                <input
-                  type="checkbox"
-                  checked={servers.includes(name)}
-                  onChange={() => onToggle(name)}
-                />
-                {name}
-              </label>
-            ))}
-          </div>
-        </fieldset>
-      </div>
-    </>
-  );
+type DurationUnit = 's' | 'min';
+type FileSizeUnit = 'KB' | 'MB';
+type UnitOption<T extends string> = { id: T; label: string };
+
+const DURATION_UNITS: UnitOption<DurationUnit>[] = [
+  { id: 's', label: 'sec' },
+  { id: 'min', label: 'min' },
+];
+const FILE_SIZE_UNITS: UnitOption<FileSizeUnit>[] = [
+  { id: 'KB', label: 'KB' },
+  { id: 'MB', label: 'MB' },
+];
+const DURATION_SECONDS: Record<DurationUnit, number> = { s: 1, min: 60 };
+
+function fromSeconds(seconds: number, unit: DurationUnit): number {
+  return prettyDiv(seconds, DURATION_SECONDS[unit]);
+}
+
+function toSeconds(value: number, unit: DurationUnit): number {
+  return Math.max(0, Math.round(value * DURATION_SECONDS[unit]));
+}
+
+function fromKb(kb: number, unit: FileSizeUnit): number {
+  return unit === 'KB' ? kb : prettyDiv(kb, 1024);
+}
+
+function toKb(value: number, unit: FileSizeUnit): number {
+  const kb = unit === 'KB' ? value : value * 1024;
+  return Math.max(1, Math.round(kb));
+}
+
+function prettyDiv(value: number, divisor: number): number {
+  return Number((value / divisor).toFixed(4));
 }
 
 function NumberField({
   id,
   label,
+  hideLabel,
   value,
   min,
   max,
@@ -706,6 +566,7 @@ function NumberField({
 }: {
   id: string;
   label: string;
+  hideLabel?: boolean;
   value: number;
   min: number;
   max?: number;
@@ -714,7 +575,7 @@ function NumberField({
 }) {
   return (
     <label className="load-field" htmlFor={id}>
-      {label}
+      {hideLabel ? null : label}
       <input
         id={id}
         type="number"
@@ -722,6 +583,7 @@ function NumberField({
         max={max}
         value={value}
         disabled={disabled}
+        aria-label={label}
         onChange={(event) => {
           const parsed = parseInt(event.target.value, 10);
           if (Number.isNaN(parsed) || parsed < min) {
@@ -735,6 +597,122 @@ function NumberField({
   );
 }
 
+function MeasuredField({
+  id,
+  label,
+  hideLabel,
+  value,
+  min,
+  max,
+  disabled,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  hideLabel?: boolean;
+  value: number;
+  min: number;
+  max?: number;
+  disabled: boolean;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="load-field" htmlFor={id}>
+      {hideLabel ? null : label}
+      <input
+        id={id}
+        type="number"
+        min={min}
+        max={max}
+        step="any"
+        value={value}
+        disabled={disabled}
+        aria-label={label}
+        onChange={(event) => {
+          const parsed = Number(event.target.value);
+          if (!Number.isFinite(parsed) || parsed < min) {
+            onChange(min);
+            return;
+          }
+          onChange(max !== undefined && parsed > max ? max : parsed);
+        }}
+      />
+    </label>
+  );
+}
+
+function UnitSwitch<T extends string>({
+  units,
+  value,
+  disabled,
+  label,
+  onChange,
+}: {
+  units: UnitOption<T>[];
+  value: T;
+  disabled: boolean;
+  label: string;
+  onChange: (unit: T) => void;
+}) {
+  return (
+    <label className="load-field">
+      <select
+        className="load-unit-select"
+        aria-label={label}
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value as T)}
+      >
+        {units.map((item) => (
+          <option key={item.id} value={item.id}>
+            {item.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+// What is wrong with the schedule of outages, or null when it can run. The load stand checks
+// the same rules, so a mistake is found here before the first algorithm starts.
+function outageProblem(outages: ScheduledOutage[], durationSec: number): string | null {
+  for (const [index, outage] of outages.entries()) {
+    const row = `Outage ${index + 1}`;
+    if (outage.stopAtSec < 5) {
+      return `${row}: a server can be stopped no earlier than second 5.`;
+    }
+    if (outage.startAtSec <= outage.stopAtSec) {
+      return `${row}: the start must come after the stop.`;
+    }
+    // Zero is a test without an end, so any moment is inside it.
+    if (durationSec > 0 && outage.stopAtSec >= durationSec) {
+      return `${row}: the server stops at second ${outage.stopAtSec}, but the test lasts ${durationSec} s.`;
+    }
+    for (const other of outages.slice(0, index)) {
+      if (other.server === outage.server && outage.stopAtSec < other.startAtSec && other.stopAtSec < outage.startAtSec) {
+        return `${row}: ${serverLabel(outage.server)} is already stopped at that time by another row.`;
+      }
+    }
+  }
+  // The cluster must keep at least one server: look at the moment each server is switched off.
+  for (const outage of outages) {
+    const down = new Set(
+      outages
+        .filter((other) => other.stopAtSec <= outage.stopAtSec && outage.stopAtSec < other.startAtSec)
+        .map((other) => other.server),
+    );
+    if (down.size >= trainingServerNames.length) {
+      return `All servers would be down at second ${outage.stopAtSec}. Keep at least one running.`;
+    }
+  }
+  return null;
+}
+
+function serverLabel(name: string): string {
+  const number = name.replace(/\D+/g, '');
+  return number ? `Server ${number}` : name;
+}
+
 function formatClock(totalSeconds: number) {
   const seconds = Math.max(0, Math.floor(totalSeconds));
   const hours = Math.floor(seconds / 3600);
@@ -743,101 +721,91 @@ function formatClock(totalSeconds: number) {
   return [hours, minutes, rest].map((part) => String(part).padStart(2, '0')).join(':');
 }
 
-function formatElapsed(status: { isRunning: boolean; stats: { elapsedSeconds?: number; durationSeconds?: number } }) {
-  const elapsed = status.stats.elapsedSeconds || 0;
-  const planned = status.stats.durationSeconds || 0;
-  const clock = formatClock(elapsed);
-  if (planned > 0) {
-    return `${clock} / ${formatClock(planned)}`;
-  }
-  if (status.isRunning || elapsed > 0) {
-    return `${clock} / ∞`;
-  }
-  return clock;
-}
-
-function formatWaveProgress(stats: { waveIteration?: number; waveIndex?: number; waveCount?: number; waveIterations?: number }) {
-  const iteration = stats.waveIteration || 0;
-  const limit = (stats.waveIterations || 0) > 0 ? String(stats.waveIterations) : '∞';
-  return `${iteration} / ${limit} · волна ${stats.waveIndex || 0}/${stats.waveCount || 0}`;
-}
-
 function currentAlgorithmName(series: SeriesStatus, algorithms: { id: string; name: string }[]) {
   const id = series.runs[series.current]?.algorithm ?? '';
   return algorithms.find((algorithm) => algorithm.id === id)?.name ?? (id || '—');
 }
 
-function seriesPhaseLabel(series: SeriesStatus) {
-  switch (series.phase) {
-    case 'preparing':
-      return 'Подготовка';
-    case 'running':
-      return 'Идёт тест';
-    case 'cooldown':
-      return `Пауза ${series.cooldownLeftSec} с`;
-    case 'finished':
-      return 'Серия завершена';
-    case 'stopped':
-      return 'Серия остановлена';
-    default:
-      return 'Ошибка серии';
-  }
-}
+type ReportRow = { key: string; name: string; running: boolean; report: TestMetrics };
 
-// Runs plus the pauses between them, rounded to minutes; warm-up adds a few seconds per run.
-function formatSeriesEstimate(runs: number, durationSec: number) {
-  const warmupSec = 10;
-  const totalSec = runs * (durationSec + warmupSec) + (runs - 1) * seriesCooldownSec;
-  const minutes = Math.round(totalSec / 60);
-  return minutes >= 60 ? `${Math.floor(minutes / 60)} ч ${minutes % 60} мин` : `${minutes} мин`;
-}
-
-// Reports of the runs of a series in the order they ran: finished runs from the series
-// itself, the run in progress from the live status.
-function comparisonReports(
+// Rows of the report in the order the runs went: finished runs from the series itself,
+// the run in progress from the live status. Every run adds a row below the previous ones.
+function reportRows(
   series: SeriesStatus | null,
   algorithms: { id: string; name: string }[],
   liveReport: TestMetrics | null | undefined,
-) {
+): ReportRow[] {
   if (!series) {
     return [];
   }
-  const items: { key: string; name: string; report: TestMetrics }[] = [];
+  const rows: ReportRow[] = [];
   series.runs.forEach((run, index) => {
     const name = algorithms.find((algorithm) => algorithm.id === run.algorithm)?.name ?? run.algorithm;
     const live = index === series.current && run.state === 'running' ? liveReport : null;
     const report = run.report ?? live;
     if (report) {
-      items.push({ key: run.algorithm, name, report });
+      rows.push({ key: run.algorithm, name, running: !run.report, report });
     }
   });
-  return items;
+  return rows;
 }
 
-function ReportBlock({ title, report }: { title: string; report: TestMetrics }) {
-  return (
-    <div className="load-report">
-      <h3>{title}</h3>
-      <div className="load-report-grid">
-        <Metric label="RPS ↑" value={report.rps.toFixed(2)} />
-        <Metric label="p50, ms ↓" value={report.p50Millis.toFixed(2)} />
-        <Metric label="p95, ms ↓" value={(report.p95Millis ?? 0).toFixed(2)} />
-        <Metric label="p99, ms ↓" value={report.p99Millis.toFixed(2)} />
-        <Metric label="Errors, % ↓" value={`${report.errorRatePercent.toFixed(2)}%`} />
-        <Metric
-          label="CPU fairness ↑"
-          value={report.cpuFairnessAvailable ? report.cpuFairnessIndex.toFixed(3) : 'N/A'}
-        />
-      </div>
-    </div>
-  );
-}
+// The report columns: the figure of a run, and whether a higher value is the better one.
+const reportColumns: { label: string; pick: (report: TestMetrics) => number | null; higher: boolean; text: (value: number) => string }[] = [
+  { label: 'RPS ↑', pick: (report) => report.rps, higher: true, text: (value) => value.toFixed(2) },
+  { label: 'p50, ms ↓', pick: (report) => report.p50Millis, higher: false, text: (value) => value.toFixed(2) },
+  { label: 'p95, ms ↓', pick: (report) => report.p95Millis ?? 0, higher: false, text: (value) => value.toFixed(2) },
+  { label: 'p99, ms ↓', pick: (report) => report.p99Millis, higher: false, text: (value) => value.toFixed(2) },
+  {
+    label: 'CPU MAD, % ↓',
+    pick: (report) => (report.cpuMadMeanAvailable ? report.cpuMadMeanPercent ?? 0 : null),
+    higher: false,
+    text: (value) => value.toFixed(2),
+  },
+  { label: 'Errors, % ↓', pick: (report) => report.errorRatePercent, higher: false, text: (value) => `${value.toFixed(2)}%` },
+];
 
-function Metric({ label, value }: { label: string; value: string }) {
+function ReportTable({ rows }: { rows: ReportRow[] }) {
+  if (rows.length === 0) {
+    return <p className="load-empty">The report appears when the first algorithm finishes.</p>;
+  }
+  // The best value of a column among the finished runs; the numbers of a run in progress are still moving.
+  const finished = rows.filter((row) => !row.running);
+  const best = (column: (typeof reportColumns)[number]) => {
+    const values = finished.map((row) => column.pick(row.report)).filter((value): value is number => value !== null);
+    if (finished.length < 2 || values.length === 0) {
+      return null;
+    }
+    return column.higher ? Math.max(...values) : Math.min(...values);
+  };
+  const bests = reportColumns.map(best);
+
   return (
-    <div className="load-metric">
-      <span>{label}</span>
-      <strong>{value}</strong>
+    <div className="load-table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Algorithm</th>
+            {reportColumns.map((column) => <th key={column.label}>{column.label}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ key, name, running, report }) => (
+            <tr key={key}>
+              <td>{running ? `${name} (running)` : name}</td>
+              {reportColumns.map((column, index) => {
+                const value = column.pick(report);
+                const isBest = !running && value !== null && value === bests[index];
+                return (
+                  <td key={column.label} className={isBest ? 'load-best' : ''}>
+                    {value === null ? 'N/A' : column.text(value)}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

@@ -44,7 +44,7 @@ type SeriesSample struct {
 	AtSec        int     `json:"t"`
 	MeanCPU      float64 `json:"meanCpu"`
 	MaxCPU       float64 `json:"maxCpu"`
-	CPUSpread    float64 `json:"cpuSpread"`
+	CPUMAD       float64 `json:"cpuMad"`
 	RPS          float64 `json:"rps"`
 	P50Millis    float64 `json:"p50Ms"`
 	P95Millis    float64 `json:"p95Ms"`
@@ -75,7 +75,9 @@ type ServerHistoryPoint struct {
 // SeriesStatus is the state of the last series. It stays after the series is over
 // so the results can be looked at until the next series starts.
 type SeriesStatus struct {
-	Active          bool            `json:"active"`
+	Active bool `json:"active"`
+	// Preset is the scenario the series was started from, so a reloaded page can open it.
+	Preset          string          `json:"preset,omitempty"`
 	Phase           string          `json:"phase"`
 	Current         int             `json:"current"`
 	CooldownLeftSec int             `json:"cooldownLeftSec"`
@@ -84,6 +86,12 @@ type SeriesStatus struct {
 	Message         string          `json:"message,omitempty"`
 	Outages         []PlannedOutage `json:"outages,omitempty"`
 	Runs            []SeriesRun     `json:"runs"`
+	// ElapsedSec is the time of the whole series so far, pauses between the runs included.
+	// It stops growing when the series ends.
+	ElapsedSec int `json:"elapsedSec"`
+
+	startedAt time.Time
+	endedAt   time.Time
 }
 
 // SeriesSnapshot returns a copy of the series state. Samples are left out unless
@@ -95,6 +103,7 @@ func (e *Engine) SeriesSnapshot(withSamples bool) *SeriesStatus {
 		return nil
 	}
 	snapshot := *e.series
+	snapshot.ElapsedSec = seriesElapsedSec(e.series.startedAt, e.series.endedAt)
 	snapshot.Outages = append([]PlannedOutage(nil), e.series.Outages...)
 	snapshot.Runs = make([]SeriesRun, len(e.series.Runs))
 	for index, run := range e.series.Runs {
@@ -153,8 +162,12 @@ func (e *Engine) StartSeries(rawConfig TestConfig) error {
 	if err != nil {
 		return err
 	}
-	if config.Duration <= 0 {
-		return fmt.Errorf("a series needs a fixed test duration")
+	if config.Duration < 0 {
+		return fmt.Errorf("test duration must not be negative")
+	}
+	// Algorithms take turns by the clock, so only a single run can go on until it is stopped.
+	if config.Duration == 0 && len(algorithms) != 1 {
+		return fmt.Errorf("an open-ended test needs exactly one algorithm")
 	}
 	if len(config.Phases) > 0 {
 		return fmt.Errorf("a series does not support load waves")
@@ -202,8 +215,10 @@ func (e *Engine) StartSeries(rawConfig TestConfig) error {
 	}
 	e.series = &SeriesStatus{
 		Active:      true,
+		Preset:      config.Preset,
 		Phase:       SeriesPreparing,
 		DurationSec: config.Duration,
+		startedAt:   time.Now(),
 		FreezeModel: config.FreezeModel,
 		Outages:     append([]PlannedOutage(nil), config.OutagePlan...),
 		Runs:        runs,
@@ -214,6 +229,17 @@ func (e *Engine) StartSeries(rawConfig TestConfig) error {
 	log.Printf("Starting series: algorithms=%v duration=%ds cooldown=%ds", algorithms, config.Duration, cooldownSec)
 	go e.runSeries(ctx, config, cooldownSec)
 	return nil
+}
+
+// seriesElapsedSec counts up to now while the series goes, and up to its end afterwards.
+func seriesElapsedSec(startedAt time.Time, endedAt time.Time) int {
+	if startedAt.IsZero() {
+		return 0
+	}
+	if endedAt.IsZero() {
+		endedAt = time.Now()
+	}
+	return int(endedAt.Sub(startedAt).Seconds())
 }
 
 func cleanSeriesAlgorithms(algorithms []string) ([]string, error) {
@@ -321,6 +347,7 @@ func (e *Engine) finishSeries(phase string, message string) {
 	defer e.seriesMu.Unlock()
 	if e.series != nil {
 		e.series.Active = false
+		e.series.endedAt = time.Now()
 		e.series.Phase = phase
 		e.series.CooldownLeftSec = 0
 		e.series.Message = message
@@ -421,13 +448,16 @@ func (e *Engine) collectSeriesRun(ctx context.Context, index int) bool {
 			if second <= lastSecond {
 				continue
 			}
-			servers, err := FetchServerStatuses(e.prometheusURL)
+			servers, err := e.fetchServerStatuses()
 			if err != nil {
 				continue
 			}
 			lastSecond = second
 			sample := buildSeriesSample(second, servers, window)
-			point := ServerHistoryPoint{At: time.Now().UnixMilli(), Servers: withPowerState(servers)}
+			// Stamped on the clock of the test, like the sample and the outage schedule. The wall
+			// clock of this machine jumps ahead every half a minute while the timers do not, so
+			// wall stamps put a stop at second 300 about 20 s after the strip that marks it.
+			point := ServerHistoryPoint{At: runPointTime(startedAt, second), Servers: withPowerState(servers)}
 			e.updateSeries(func(series *SeriesStatus) {
 				run := &series.Runs[index]
 				run.Samples = append(run.Samples, sample)
@@ -551,13 +581,13 @@ func (w *seriesWindow) rates() windowRates {
 }
 
 func buildSeriesSample(second int, servers []ServerStatus, window *seriesWindow) SeriesSample {
-	mean, peak, spread, live := summarizeLiveCPU(servers)
+	mean, peak, mad, live := summarizeLiveCPU(servers)
 	rates := window.rates()
 	return SeriesSample{
 		AtSec:        second,
 		MeanCPU:      mean,
 		MaxCPU:       peak,
-		CPUSpread:    spread,
+		CPUMAD:       mad,
 		RPS:          rates.RPS,
 		P50Millis:    rates.P50Millis,
 		P95Millis:    rates.P95Millis,
@@ -568,28 +598,32 @@ func buildSeriesSample(second int, servers []ServerStatus, window *seriesWindow)
 }
 
 // summarizeLiveCPU looks only at servers that are up: a stopped container reports
-// no load, and counting it would pull the mean down and stretch the spread.
-// CPU is a share of each server's own limit.
-func summarizeLiveCPU(servers []ServerStatus) (mean float64, peak float64, spread float64, live int) {
-	lowest := math.Inf(1)
+// no load, and counting it would pull the mean down and stretch the deviation.
+// CPU is a share of each server's own limit. The deviation is the mean absolute
+// deviation of the servers from their mean, in percentage points.
+func summarizeLiveCPU(servers []ServerStatus) (mean float64, peak float64, mad float64, live int) {
+	loads := make([]float64, 0, len(servers))
 	sum := 0.0
 	for _, server := range servers {
 		if server.Status != "up" {
 			continue
 		}
-		live++
+		loads = append(loads, server.CPU)
 		sum += server.CPU
 		if server.CPU > peak {
 			peak = server.CPU
 		}
-		if server.CPU < lowest {
-			lowest = server.CPU
-		}
 	}
+	live = len(loads)
 	if live == 0 {
 		return 0, 0, 0, 0
 	}
-	return sum / float64(live), peak, peak - lowest, live
+	return sum / float64(live), peak, meanAbsoluteDeviation(loads), live
+}
+
+// runPointTime is the moment, in Unix milliseconds, of the given second of a run.
+func runPointTime(startedAt time.Time, second int) int64 {
+	return startedAt.UnixMilli() + int64(second)*1000
 }
 
 // withPowerState copies the servers and fills in what the charts read as "stopped":
@@ -599,7 +633,7 @@ func withPowerState(servers []ServerStatus) []ServerStatus {
 	for index := range copied {
 		copied[index].Running = copied[index].Status == "up"
 		if !copied[index].Running {
-			copied[index].EDS = 0
+			clearDownServer(&copied[index])
 		}
 	}
 	return copied

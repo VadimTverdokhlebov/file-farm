@@ -64,8 +64,7 @@
   margin-bottom: 16px;
 }
 
-.load-card h2,
-.load-report h3 {
+.load-card h2 {
   margin: 0;
   font-size: 20px;
 }
@@ -113,12 +112,6 @@ fieldset.load-field legend {
   padding: 0;
 }
 
-.load-checks {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px 16px;
-}
-
 .load-check {
   display: flex;
   align-items: center;
@@ -151,6 +144,16 @@ fieldset.load-field legend {
   box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
 }
 
+.load-unit-fields {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: end;
+}
+
+.load-field select.load-unit-select {
+  width: auto;
+  min-width: 4.5rem;
+}
+
 .load-actions {
   display: flex;
   gap: 8px;
@@ -158,60 +161,31 @@ fieldset.load-field legend {
   margin-top: 16px;
 }
 
-.load-scenarios {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+.load-actions + .load-fields {
+  margin-top: 20px;
 }
 
-.load-phases {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+.load-subtitle {
+  margin: 22px 0 8px;
+  font-size: 16px;
 }
 
-.load-phase {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  padding: 12px;
-  border: 1px solid #e4eaf0;
-  border-radius: 12px;
-  background: #f8fafc;
+.load-outage-fields {
+  grid-template-columns: minmax(0, 1.2fr) repeat(2, minmax(0, 1fr)) auto auto;
+  align-items: end;
 }
 
-.load-phase h3 {
-  grid-column: 1 / -1;
-  margin: 0;
-  font-size: 14px;
+.load-outage-fields:empty {
+  display: none;
 }
 
-.load-scenario {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  text-align: left;
-  padding: 14px;
-  border: 1px solid #d9e0e7;
-  border-radius: 12px;
-  background: #f8fafc;
-  color: #172033;
-  cursor: pointer;
+.load-algorithm-fields {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
 }
 
-.load-scenario span {
-  color: #5c6b7a;
-  font-size: 14px;
-}
-
-.load-scenario-active {
-  border-color: #1f6f5b;
-  background: #f3faf7;
-}
-
-.load-scenario:disabled {
-  cursor: not-allowed;
-  opacity: 0.7;
+.load-check[for='compareFreeze'] {
+  margin-top: 16px;
 }
 
 .load-weakness {
@@ -223,15 +197,13 @@ fieldset.load-field legend {
   margin-top: 8px;
 }
 
-.load-stats,
-.load-report-grid {
+.load-stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 12px;
 }
 
-.load-stats div,
-.load-metric {
+.load-stats div {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -241,34 +213,24 @@ fieldset.load-field legend {
   background: #f8fafc;
 }
 
-.load-stats span,
-.load-metric span {
+.load-stats span {
   color: #5c6b7a;
   font-size: 13px;
 }
 
-.load-stats strong,
-.load-metric strong {
+.load-stats strong {
   font-size: 22px;
   font-variant-numeric: tabular-nums;
 }
 
-.load-report {
-  margin-top: 18px;
-  padding-top: 16px;
-  border-top: 1px solid #e4eaf0;
-}
-
-.load-report h3 {
-  margin-bottom: 12px;
-}
-
-.load-report h3 + .load-report-grid + h3 {
-  margin-top: 16px;
-}
-
 .load-empty {
   margin: 8px 0 0;
+}
+
+/* Content right under a card heading sits as far from it as a table does. */
+.load-card > h2 + .load-chart-range,
+.load-card > h2 + .load-empty {
+  margin-top: 14px;
 }
 
 .load-chart-range {
@@ -317,6 +279,26 @@ fieldset.load-field legend {
   cursor: not-allowed;
 }
 
+.load-chart-scroll {
+  position: relative;
+  height: 8px;
+  margin: 12px 0 0;
+  background: #e4eaf0;
+  border-radius: 999px;
+  cursor: pointer;
+  user-select: none;
+  touch-action: none;
+}
+
+.load-chart-scroll-thumb {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  background: #1f6f5b;
+  border-radius: 999px;
+  pointer-events: none;
+}
+
 .load-chart-outage {
   fill: #be123c;
   fill-opacity: 0.1;
@@ -349,6 +331,9 @@ fieldset.load-field legend {
 .load-chart h3 {
   margin: 0 0 8px;
   font-size: 14px;
+  line-height: 1.3;
+  min-height: 1.3em;
+  white-space: nowrap;
 }
 
 .load-legend {
@@ -481,8 +466,9 @@ fieldset.load-field legend {
   }
 
   .load-fields,
-  .load-scenarios,
-  .load-phase,
+  .load-unit-fields,
+  .load-outage-fields,
+  .load-algorithm-fields,
   .load-charts {
     grid-template-columns: 1fr;
   }

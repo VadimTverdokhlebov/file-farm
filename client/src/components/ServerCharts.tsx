@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ServerHistoryPoint, ServerStatus } from '../types/loadTest';
+import { ChartScrollBar } from './ChartScrollBar';
 import { formatTick, niceMax } from './chartMath';
 
 const SERVER_COLORS = ['#1f6f5b', '#2563eb', '#d97706', '#be123c'];
@@ -11,9 +12,9 @@ const METRICS: { key: MetricKey; label: string; unit: string; fixedMax: number |
   { key: 'cpu', label: 'CPU', unit: '%', fixedMax: 100 },
   { key: 'ram', label: 'RAM', unit: '%', fixedMax: 100 },
   { key: 'rps', label: 'RPS', unit: '', fixedMax: null },
-  { key: 'totalRps', label: 'Общий RPS', unit: '', fixedMax: null },
-  { key: 'eds', label: 'Вес EDS', unit: '', fixedMax: null },
-  { key: 'mem', label: 'Память', unit: 'МБ', fixedMax: null },
+  { key: 'totalRps', label: 'Total RPS', unit: '', fixedMax: null },
+  { key: 'eds', label: 'EDS weight', unit: '', fixedMax: null },
+  { key: 'mem', label: 'Memory', unit: 'MB', fixedMax: null },
 ];
 
 const SECOND = 1000;
@@ -23,10 +24,10 @@ const MINUTE = 60 * SECOND;
 // label every majorMs. Ticks sit on round clock times, so they slide left as the
 // window moves instead of the labels jumping to the edge of the data.
 const RANGES = [
-  { label: '3 мин', ms: 3 * MINUTE, minorMs: 10 * SECOND, majorMs: 30 * SECOND },
-  { label: '10 мин', ms: 10 * MINUTE, minorMs: 30 * SECOND, majorMs: MINUTE },
-  { label: '30 мин', ms: 30 * MINUTE, minorMs: MINUTE, majorMs: 5 * MINUTE },
-  { label: '1 час', ms: 60 * MINUTE, minorMs: 5 * MINUTE, majorMs: 10 * MINUTE },
+  { label: '3 min', ms: 3 * MINUTE, minorMs: 10 * SECOND, majorMs: 30 * SECOND },
+  { label: '10 min', ms: 10 * MINUTE, minorMs: 30 * SECOND, majorMs: MINUTE },
+  { label: '30 min', ms: 30 * MINUTE, minorMs: MINUTE, majorMs: 5 * MINUTE },
+  { label: '1 h', ms: 60 * MINUTE, minorMs: 5 * MINUTE, majorMs: 10 * MINUTE },
 ];
 
 type Range = (typeof RANGES)[number];
@@ -59,14 +60,20 @@ export function ServerCharts({
     RANGES.find((item) => item.ms === initialRangeMs) ?? RANGES[0],
   );
   const rangeMs = range.ms;
+  // null follows the latest data, a number is where the scrolled window starts.
+  const [scrollAt, setScrollAt] = useState<number | null>(null);
   const names = serverNames(history);
-  const windowEnd = history.length > 0 ? history[history.length - 1].at : Date.now();
-  const windowStart = windowEnd - rangeMs;
-  const visible = history.filter((point) => point.at >= windowStart);
+  const latestAt = history.length > 0 ? history[history.length - 1].at : Date.now();
+  const firstAt = history.length > 0 ? history[0].at : latestAt;
+  const lastStart = latestAt - rangeMs;
+  const canScroll = lastStart > firstAt;
+  const windowStart = scrollAt === null || !canScroll ? lastStart : Math.min(Math.max(scrollAt, firstAt), lastStart);
+  const windowEnd = windowStart + rangeMs;
+  const visible = history.filter((point) => point.at >= windowStart && point.at <= windowEnd);
 
   return (
     <>
-      <div className="load-chart-range" role="group" aria-label="Интервал графиков">
+      <div className="load-chart-range" role="group" aria-label="Chart interval">
         {RANGES.map((item) => (
           <button
             key={item.ms}
@@ -79,7 +86,7 @@ export function ServerCharts({
         ))}
       </div>
       {history.length === 0 || names.length === 0 ? (
-        <p className="load-empty">Графики появятся, когда придёт статус серверов.</p>
+        <p className="load-empty">Charts appear once server status arrives.</p>
       ) : (
         <div className="load-charts">
           {METRICS.map((metric) => (
@@ -89,7 +96,7 @@ export function ServerCharts({
                 <div className="load-legend">
                   <span>
                     <i style={{ background: TOTAL_COLOR }} />
-                    кластер {formatNumber(totalRps(history[history.length - 1]))}
+                    cluster {formatNumber(totalRps(history[history.length - 1]))}
                   </span>
                 </div>
               ) : (
@@ -115,6 +122,13 @@ export function ServerCharts({
           ))}
         </div>
       )}
+      <ChartScrollBar
+        total={latestAt - firstAt}
+        window={rangeMs}
+        start={windowStart - firstAt}
+        onScroll={(next) => setScrollAt(next == null ? null : firstAt + next)}
+        label="Scroll the charts"
+      />
     </>
   );
 }
@@ -162,7 +176,7 @@ function MetricChart({
           return (
             <g key={`${outage.server}-${outage.fromMs}`}>
               <rect x={left} y={PAD.top} width={Math.max(right - left, 0)} height={plotH} className="load-chart-outage">
-                <title>{`${outage.server} остановлен с ${formatClock(outage.fromMs)} до ${formatClock(outage.toMs)}`}</title>
+                <title>{`${outage.server} stopped from ${formatClock(outage.fromMs)} to ${formatClock(outage.toMs)}`}</title>
               </rect>
               {outage.fromMs >= windowStart && (
                 <text x={left + 3} y={PAD.top + 10} className="load-chart-outage-label">
@@ -416,11 +430,11 @@ function formatNumber(value: number): string {
 }
 
 function formatClock(timestamp: number): string {
-  return new Date(timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return new Date(timestamp).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
 function formatTickClock(timestamp: number, withSeconds: boolean): string {
-  return new Date(timestamp).toLocaleTimeString('ru-RU', {
+  return new Date(timestamp).toLocaleTimeString('en-GB', {
     hour: '2-digit',
     minute: '2-digit',
     ...(withSeconds ? { second: '2-digit' } : {}),

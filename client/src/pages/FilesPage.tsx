@@ -14,19 +14,14 @@ export const FilesPage = () => {
       <div className="files-shell">
         <header className="files-header">
           <div>
-            <p className="files-kicker">File Farm</p>
             <h1>Files</h1>
-            <p className="files-lead">
-              Upload a file to the cluster, compress one without storing it, or download and delete a stored file by name.
-            </p>
           </div>
-          <Link className="files-nav" to="/load-test">Load test</Link>
+          <Link className="files-nav" to="/load-test">Load panel</Link>
         </header>
 
         <div className="files-grid">
           <FileActionCard
             title="Upload"
-            description="The file is stored and can be downloaded or deleted later."
             inputId="upload-file"
             inputKey={files.uploadInputKey}
             file={files.uploadSelection}
@@ -38,7 +33,6 @@ export const FilesPage = () => {
           />
           <FileActionCard
             title="Compress"
-            description="Returns a gzip copy. The original is not saved on the server."
             inputId="compress-file"
             inputKey={files.compressInputKey}
             file={files.compressSelection}
@@ -53,12 +47,9 @@ export const FilesPage = () => {
         <section className="files-library">
           <div className="files-library-head">
             <h2>Stored files</h2>
-            <p>Files uploaded in this session are listed here. Any other stored name can be used below.</p>
           </div>
 
-          {files.sessionFiles.length === 0 ? (
-            <p className="files-empty">No files uploaded in this session yet.</p>
-          ) : (
+          {files.sessionFiles.length > 0 && (
             <ul className="files-list">
               {files.sessionFiles.map((file) => (
                 <SessionFileRow
@@ -117,7 +108,6 @@ export const FilesPage = () => {
 
 type FileActionCardProps = {
   title: string;
-  description: string;
   inputId: string;
   inputKey: number;
   file: File | null;
@@ -130,7 +120,6 @@ type FileActionCardProps = {
 
 function FileActionCard({
   title,
-  description,
   inputId,
   inputKey,
   file,
@@ -143,7 +132,6 @@ function FileActionCard({
   return (
     <section className="files-card">
       <h2>{title}</h2>
-      <p className="files-card-copy">{description}</p>
       <label className="files-drop" htmlFor={inputId}>
         <span>{file ? file.name : 'Choose a file'}</span>
         <input

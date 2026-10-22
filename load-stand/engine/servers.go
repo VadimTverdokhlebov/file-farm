@@ -116,6 +116,21 @@ func (c *dockerClient) do(ctx context.Context, method, path string) (*http.Respo
 	return c.http.Do(request)
 }
 
+// fetchServerStatuses reads the servers from Prometheus and then corrects them with
+// the state of the containers. Docker knows about a stop at once, Prometheus only after
+// a failed scrape, and the live view and the saved series must show the same thing.
+func (e *Engine) fetchServerStatuses() ([]ServerStatus, error) {
+	servers, err := FetchServerStatuses(e.prometheusURL)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if states, dockerErr := e.docker.running(ctx); dockerErr == nil {
+		applyContainerPower(servers, states)
+	} else {
+		applyContainerPower(servers, nil)
+	}
+	return servers, err
+}
+
 func applyContainerPower(servers []ServerStatus, states map[string]bool) {
 	for i := range servers {
 		running, ok := states[servers[i].Name]
@@ -126,7 +141,17 @@ func applyContainerPower(servers []ServerStatus, states map[string]bool) {
 		servers[i].Running = running
 		if !running {
 			servers[i].Status = "down"
-			servers[i].EDS = 0
+			clearDownServer(&servers[i])
 		}
 	}
+}
+
+// clearDownServer drops what a stopped server still reports. Prometheus averages RPS
+// and errors over 15 s, so without this the charts show a tail of traffic that no longer
+// exists for a quarter of a minute after the server went down.
+func clearDownServer(server *ServerStatus) {
+	server.EDS = 0
+	server.RPS = 0
+	server.Error = 0
+	server.CPU = 0
 }

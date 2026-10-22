@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"math"
+	"strings"
 	"testing"
 	"time"
 )
@@ -40,16 +41,17 @@ func TestSummarizeLiveCPUIgnoresStoppedServers(t *testing.T) {
 		{Name: "c", Status: "down", CPU: 0},
 		{Name: "d", Status: "up", CPU: 80},
 	}
-	mean, peak, spread, live := summarizeLiveCPU(servers)
-	if live != 3 || mean != 60 || peak != 80 || spread != 40 {
-		t.Fatalf("got mean=%v peak=%v spread=%v live=%d", mean, peak, spread, live)
+	mean, peak, mad, live := summarizeLiveCPU(servers)
+	// 40, 60 and 80 sit 20, 0 and 20 points from their mean of 60.
+	if live != 3 || mean != 60 || peak != 80 || math.Abs(mad-40.0/3) > 1e-9 {
+		t.Fatalf("got mean=%v peak=%v mad=%v live=%d", mean, peak, mad, live)
 	}
 }
 
 func TestSummarizeLiveCPUWithNoServers(t *testing.T) {
-	mean, peak, spread, live := summarizeLiveCPU([]ServerStatus{{Name: "a", Status: "down"}})
-	if live != 0 || mean != 0 || peak != 0 || spread != 0 {
-		t.Fatalf("got mean=%v peak=%v spread=%v live=%d", mean, peak, spread, live)
+	mean, peak, mad, live := summarizeLiveCPU([]ServerStatus{{Name: "a", Status: "down"}})
+	if live != 0 || mean != 0 || peak != 0 || mad != 0 {
+		t.Fatalf("got mean=%v peak=%v mad=%v live=%d", mean, peak, mad, live)
 	}
 }
 
@@ -164,16 +166,44 @@ func TestSeriesServerHistoryOnlyForFinishedRuns(t *testing.T) {
 func TestWithPowerStateMarksDownServersStopped(t *testing.T) {
 	servers := []ServerStatus{
 		{Name: "a", Status: "up", EDS: 250},
-		{Name: "b", Status: "down", EDS: 250},
+		{Name: "b", Status: "down", EDS: 250, RPS: 20},
 	}
 	copied := withPowerState(servers)
 	if !copied[0].Running || copied[0].EDS != 250 {
 		t.Fatalf("live server changed: %+v", copied[0])
 	}
-	if copied[1].Running || copied[1].EDS != 0 {
+	if copied[1].Running || copied[1].EDS != 0 || copied[1].RPS != 0 {
 		t.Fatalf("stopped server not marked: %+v", copied[1])
 	}
 	if servers[1].EDS != 250 {
 		t.Fatal("the input must not be modified")
+	}
+}
+
+func TestRunPointTimeFollowsTestSeconds(t *testing.T) {
+	startedAt := time.UnixMilli(1_000_000)
+	if got := runPointTime(startedAt, 300); got != 1_300_000 {
+		t.Fatalf("second 300 should be 300 s after the start, got %d", got)
+	}
+}
+
+func TestStartSeriesOpenEndedNeedsOneAlgorithm(t *testing.T) {
+	engine := &Engine{}
+	err := engine.StartSeries(TestConfig{Concurrency: 1, Duration: 0, Algorithms: []string{"round_robin", "ema"}})
+	if err == nil || !strings.Contains(err.Error(), "open-ended") {
+		t.Fatalf("expected an open-ended test with two algorithms to be refused, got %v", err)
+	}
+}
+
+func TestSeriesElapsedStopsAtTheEnd(t *testing.T) {
+	start := time.Now().Add(-90 * time.Second)
+	if got := seriesElapsedSec(time.Time{}, time.Time{}); got != 0 {
+		t.Fatalf("a series that never started has no time, got %d", got)
+	}
+	if got := seriesElapsedSec(start, time.Time{}); got < 90 || got > 91 {
+		t.Fatalf("a running series counts up to now, got %d", got)
+	}
+	if got := seriesElapsedSec(start, start.Add(60*time.Second)); got != 60 {
+		t.Fatalf("a finished series counts up to its end, got %d", got)
 	}
 }
