@@ -399,10 +399,11 @@ class AMPPOTests(unittest.TestCase):
             self.assertEqual(stopped["server-1"], 1000)
         # Server-1 held 500 of 1000 and is now the only live server: it gets all of it,
         # and with three servers the freed share is split by what each one held.
-        # Once the server is back it is seeded at the smallest live weight, then
-        # the ±20 cap applies around the new base.
-        self.assertGreaterEqual(weights[4]["server-2"], 480)
-        self.assertLessEqual(weights[4]["server-2"], 520)
+        # Once the server is back it climbs 10 points per decision toward the
+        # lightest live peer, not a jump to half of the cluster.
+        self.assertEqual(weights[4]["server-2"], 10)
+        self.assertEqual(weights[5]["server-2"], 20)
+        self.assertEqual(weights[6]["server-2"], 30)
         self.assertGreater(weights[-1]["server-2"], 0)
 
     def test_freed_weight_is_shared_in_proportion_to_what_the_others_hold(self) -> None:
@@ -442,54 +443,40 @@ class AMPPOTests(unittest.TestCase):
 
         self.assertEqual(first, last)
 
-    def test_returning_server_takes_the_smallest_live_weight(self) -> None:
+    def test_returning_server_climbs_ten_points_to_the_smallest_live_weight(self) -> None:
         backends = tuple(Backend(name=f"server-{i}", host=f"server-{i}", port=1) for i in range(1, 5))
-        # server-4 is the coolest and would have been the old seed, at 750.
         current = {"server-1": 125, "server-2": 0, "server-3": 125, "server-4": 750}
+        cpu = (0.85, 0.0, 0.80, 0.35)
+        alive = (True, True, True, True)
 
+        recovering = frozenset({"server-2"})
         stepped = step_toward_even_cpu(
-            backends,
-            current,
-            (0.85, 0.0, 0.80, 0.35),
-            (True, True, True, True),
-            (0.0, 0.0, 0.0, 0.0),
-            weight_total=1000,
-            max_step=20,
+            backends, current, cpu, alive, (0.0, 20.0, 0.0, 0.0),
+            weight_total=1000, max_step=20,
         )
 
-        # Smallest live weight is 125, not the cool 750. After scaling onto 1000
-        # the returning host sits near 111, then the CPU gap may add 6.
-        self.assertEqual(stepped["server-2"], 117)
-        self.assertLess(stepped["server-2"], 125)
-        self.assertGreater(stepped["server-2"], 20)
+        # Cold CPU and a saturated logit must not dump the cool server's 750.
+        self.assertEqual(stepped["server-2"], 10)
         self.assertEqual(sum(stepped.values()), 1000)
 
-        hinted = step_toward_even_cpu(
-            backends,
-            current,
-            (0.85, 0.0, 0.80, 0.35),
-            (True, True, True, True),
-            (0.0, 20.0, 0.0, 0.0),
-            weight_total=1000,
-            max_step=20,
+        second = step_toward_even_cpu(
+            backends, {**current, "server-2": 10}, cpu, alive, (0.0, 0.0, 0.0, 0.0),
+            weight_total=1000, max_step=20, recovering=recovering,
         )
+        self.assertEqual(second["server-2"], 20)
 
-        # The network hint still sits inside ±20 of the seeded base, not of 0.
-        self.assertEqual(hinted["server-2"], 131)
-        self.assertEqual(sum(hinted.values()), 1000)
-
-        next_step = step_toward_even_cpu(
-            backends,
-            stepped,
-            (0.40, 0.20, 0.60, 0.80),
-            (True, True, True, True),
-            (0.0, 0.0, 0.0, 0.0),
-            weight_total=1000,
-            max_step=20,
+        last_climb = step_toward_even_cpu(
+            backends, {**current, "server-2": 120}, cpu, alive, (0.0, 0.0, 0.0, 0.0),
+            weight_total=1000, max_step=20, recovering=recovering,
         )
+        self.assertEqual(last_climb["server-2"], 125)
 
-        self.assertLessEqual(abs(next_step["server-2"] - stepped["server-2"]), 20)
-        self.assertEqual(sum(next_step.values()), 1000)
+        arrived = step_toward_even_cpu(
+            backends, {**current, "server-2": 125}, (0.40, 0.20, 0.60, 0.80), alive, (0.0, 0.0, 0.0, 0.0),
+            weight_total=1000, max_step=20,
+        )
+        self.assertLessEqual(abs(arrived["server-2"] - 125), 20)
+        self.assertEqual(sum(arrived.values()), 1000)
 
     def test_weight_step_cannot_jump_onto_a_cooler_server(self) -> None:
         # 40% CPU with weight 70 must not become 350 in one decision.

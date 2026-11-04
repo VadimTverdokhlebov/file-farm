@@ -99,6 +99,8 @@ class AMPPOBalancer(Balancer):
         self._previous_transition: (
             tuple[ClusterState, PpoAction, dict[str, int], dict[str, int]] | None
         ) = None
+        # Hosts that just came back from weight 0 and are still below the lightest peer.
+        self._recovering: set[str] = set()
 
     def select(self) -> LoadDecision:
         now = self._time_fn()
@@ -123,6 +125,7 @@ class AMPPOBalancer(Balancer):
                 for backend, server in zip(self._backends, state.servers)
             }
             self._current_weights = held
+            self._sync_recovering(tuple(server.is_healthy for server in state.servers), held)
             self._hold_until = now + self._action_hold_seconds
             return LoadDecision(weights=held)
 
@@ -143,6 +146,7 @@ class AMPPOBalancer(Balancer):
                 for backend, server in zip(self._backends, state.servers)
             }
             self._current_weights = held
+            self._sync_recovering(tuple(server.is_healthy for server in state.servers), held)
             self._hold_until = now + self._action_hold_seconds
             return LoadDecision(weights=held)
 
@@ -181,6 +185,7 @@ class AMPPOBalancer(Balancer):
                 )
 
         action = self._model.act(state)
+        self._sync_recovering(action.alive_mask, self._current_weights)
         returning = any(
             bool(alive) and self._current_weights.get(backend.host, 0) <= 0
             for backend, alive in zip(self._backends, action.alive_mask)
@@ -194,7 +199,7 @@ class AMPPOBalancer(Balancer):
             }
         else:
             # A 40% CPU reading must not replace weight 70 with 350. A host that
-            # just came back is the exception: seed it at the smallest live weight.
+            # just came back climbs 10 points at a time toward the lightest peer.
             stepped = step_toward_even_cpu(
                 self._backends,
                 self._current_weights,
@@ -202,9 +207,11 @@ class AMPPOBalancer(Balancer):
                 action.alive_mask,
                 action.raw_logits,
                 weight_total=self._weight_total,
+                recovering=frozenset(self._recovering),
             )
         weights_before_action = dict(self._current_weights)
         self._current_weights = dict(stepped)
+        self._sync_recovering(action.alive_mask, stepped)
         self._previous_transition = (state, action, weights_before_action, dict(stepped))
         self._hold_until = now + self._action_hold_seconds
         logger.info(
@@ -215,6 +222,25 @@ class AMPPOBalancer(Balancer):
             stepped,
         )
         return LoadDecision(weights=stepped)
+
+    def _sync_recovering(self, alive_mask: tuple[bool, ...], weights: dict[str, int]) -> None:
+        live_hosts = [
+            backend.host
+            for backend, alive in zip(self._backends, alive_mask)
+            if alive
+        ]
+        for backend, alive in zip(self._backends, alive_mask):
+            host = backend.host
+            if not alive:
+                self._recovering.discard(host)
+                continue
+            held = max(weights.get(host, 0), 0)
+            if held <= 0:
+                self._recovering.add(host)
+                continue
+            peers = [max(weights.get(peer, 0), 0) for peer in live_hosts if peer != host]
+            if peers and held >= min(peers):
+                self._recovering.discard(host)
 
     def set_learning_enabled(self, enabled: bool) -> None:
         self._model.set_learning_enabled(enabled)

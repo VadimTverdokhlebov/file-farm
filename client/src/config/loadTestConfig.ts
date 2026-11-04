@@ -42,7 +42,7 @@ export type TestPreset = {
   outages: ScheduledOutage[];
 };
 
-// The three loads of the capacity-gap scenario (servers with 0.5, 1, 0.5 and 2 cores), each
+// Loads of the capacity-gap scenario (servers with 0.5, 1, 0.5 and 2 cores), each
 // with a schedule of outages that can be edited before the start.
 export const testPresets: TestPreset[] = [
   {
@@ -53,6 +53,15 @@ export const testPresets: TestPreset[] = [
     fileSizeMinKb: 512,
     fileSizeMaxKb: 512,
     outages: [{ server: 'file-farm-server-3', stopAtSec: 300, startAtSec: 360 }],
+  },
+  {
+    id: 'load-85-90-s1',
+    label: '85–90%: 28 clients, 512 KB, 10 min. Server 1: stop 3 min, start 6 min',
+    concurrency: 28,
+    duration: 600,
+    fileSizeMinKb: 512,
+    fileSizeMaxKb: 512,
+    outages: [{ server: 'file-farm-server-1', stopAtSec: 180, startAtSec: 360 }],
   },
   {
     id: 'load-55-60',
