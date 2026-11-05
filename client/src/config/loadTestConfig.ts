@@ -64,6 +64,15 @@ export const testPresets: TestPreset[] = [
     outages: [{ server: 'file-farm-server-1', stopAtSec: 180, startAtSec: 360 }],
   },
   {
+    id: 'load-70-80',
+    label: '70–80%: 24 clients, 128 KB, 10 min',
+    concurrency: 24,
+    duration: 600,
+    fileSizeMinKb: 128,
+    fileSizeMaxKb: 128,
+    outages: [],
+  },
+  {
     id: 'load-55-60',
     label: '55–60%: 6 clients, 128 KB, 10 min. Server 1: stop 3 min, start 7 min. Server 3: stop 5 min, start 8 min',
     concurrency: 6,
