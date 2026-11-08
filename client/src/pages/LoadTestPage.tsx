@@ -2,6 +2,7 @@ import { Fragment, useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '../components/Button';
 import { AlgorithmComparison } from '../components/AlgorithmComparison';
+import { SaveChartsButton } from '../components/SaveChartsButton';
 import { SeriesServerCharts } from '../components/SeriesServerCharts';
 import {
   ScheduledOutage,
@@ -68,6 +69,8 @@ export const LoadTestPage = () => {
   const compareIds = (comparedAlgorithms ?? [defaultAlgorithmId])
     .filter((id) => algorithms.some((algorithm) => algorithm.id === id));
   const unusedAlgorithms = algorithms.filter((algorithm) => !compareIds.includes(algorithm.id));
+  const serverChartsRef = useRef<HTMLElement>(null);
+  const comparisonChartsRef = useRef<HTMLElement>(null);
 
   // After a reload in the middle of a series, the form shows what the series was started with.
   const restoredSeries = useRef(false);
@@ -461,8 +464,11 @@ export const LoadTestPage = () => {
           </div>
         </section>
 
-        <section className="load-card">
-          <h2>Server charts</h2>
+        <section className="load-card" ref={serverChartsRef}>
+          <div className="load-card-title">
+            <h2>Server charts</h2>
+            <SaveChartsButton cardRef={serverChartsRef} kind="Server" />
+          </div>
           <SeriesServerCharts
             series={series ?? seriesResults}
             algorithms={algorithms}
@@ -471,8 +477,11 @@ export const LoadTestPage = () => {
           />
         </section>
 
-        <section className="load-card">
-          <h2>Algorithm comparison charts</h2>
+        <section className="load-card" ref={comparisonChartsRef}>
+          <div className="load-card-title">
+            <h2>Algorithm comparison charts</h2>
+            <SaveChartsButton cardRef={comparisonChartsRef} kind="Algorithm" />
+          </div>
           <AlgorithmComparison
             series={seriesResults}
             algorithms={algorithms}
