@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { BalancerAlgorithm, SeriesOutage, SeriesRun, SeriesSample, SeriesStatus } from '../types/loadTest';
+import { BalancerAlgorithm, SeriesOutage, SeriesRun, SeriesSample, SeriesStatus, TestMetrics } from '../types/loadTest';
+import { algorithmShortName } from '../config/loadTestConfig';
 import { ChartScrollBar } from './ChartScrollBar';
 import { formatTick, formatTestSeconds, outageOverlapsWindow, scaleMax, testClockOutages, testRulerTicks } from './chartMath';
 
@@ -7,20 +8,20 @@ const COLORS = ['#1f6f5b', '#2563eb', '#d97706', '#be123c', '#7c3aed', '#0891b2'
 
 type MetricKey = 'cpuMad' | 'rps' | 'p50Ms' | 'p95Ms' | 'p99Ms' | 'errorPct';
 
-const METRICS: { key: MetricKey; label: string; unit: string; fixedMax: number | null; digits: number }[] = [
-  { key: 'cpuMad', label: 'CPU MAD', unit: '%', fixedMax: 50, digits: 1 },
-  { key: 'rps', label: 'RPS', unit: '', fixedMax: null, digits: 1 },
-  { key: 'p50Ms', label: 'Latency p50', unit: 'ms', fixedMax: null, digits: 1 },
-  { key: 'p95Ms', label: 'Latency p95', unit: 'ms', fixedMax: null, digits: 0 },
-  { key: 'p99Ms', label: 'Latency p99', unit: 'ms', fixedMax: null, digits: 0 },
-  { key: 'errorPct', label: 'Errors', unit: '%', fixedMax: 100, digits: 2 },
+const METRICS: { key: MetricKey; label: string; unit: string; fixedMax: number | null }[] = [
+  { key: 'cpuMad', label: 'CPU MAD', unit: '%', fixedMax: 50 },
+  { key: 'rps', label: 'RPS', unit: '', fixedMax: null },
+  { key: 'p50Ms', label: 'Latency p50', unit: 'ms', fixedMax: null },
+  { key: 'p95Ms', label: 'Latency p95', unit: 'ms', fixedMax: null },
+  { key: 'p99Ms', label: 'Latency p99', unit: 'ms', fixedMax: null },
+  { key: 'errorPct', label: 'Errors', unit: '%', fixedMax: 100 },
 ];
 
 const VIEW_W = 640;
-const VIEW_H = 206;
-const PAD = { top: 10, right: 12, bottom: 28, left: 42 };
+const VIEW_H = 228;
+const PAD = { top: 12, right: 34, bottom: 48, left: 67 };
 const MINOR_TICK = 3;
-const MAJOR_TICK = 7;
+const MAJOR_TICK = 8;
 // Display smoothing: each point is the mean of this many seconds on both sides.
 const SMOOTH_HALF_WIDTH = 3;
 // Chart windows in seconds, the same set as on the server charts.
@@ -35,15 +36,17 @@ export function AlgorithmComparison({
   series,
   algorithms,
   extraOutages,
+  liveReport,
 }: {
   series: SeriesStatus | null;
   algorithms: BalancerAlgorithm[];
   extraOutages?: SeriesOutage[];
+  liveReport?: TestMetrics | null;
 }) {
   const [hidden, setHidden] = useState<string[]>([]);
   const [rangeSec, setRangeSec] = useState(RANGES[0].sec);
-  // null follows the latest data, a number is where the scrolled window starts.
-  const [scrollSec, setScrollSec] = useState<number | null>(null);
+  // 0 starts at the left; null follows the latest sample after the user pans to the end.
+  const [scrollSec, setScrollSec] = useState<number | null>(0);
 
   if (!series || series.runs.length === 0) {
     return (
@@ -61,7 +64,7 @@ export function AlgorithmComparison({
     );
   }
 
-  const nameOf = (id: string) => algorithms.find((item) => item.id === id)?.name ?? id;
+  const nameOf = (id: string) => algorithmShortName(id, algorithms.find((item) => item.id === id)?.name);
   const colorOf = (id: string, runIndex: number) => {
     const position = algorithms.findIndex((item) => item.id === id);
     return COLORS[(position >= 0 ? position : runIndex) % COLORS.length];
@@ -74,7 +77,9 @@ export function AlgorithmComparison({
   // The window starts at 0 until the test fills it, then follows the latest sample.
   const latestSec = Math.max(0, ...shown.flatMap(({ run }) => (run.samples ?? []).map((sample) => sample.t)));
   const lastStartSec = Math.max(0, latestSec - windowSec);
-  const windowStartSec = scrollSec === null ? lastStartSec : Math.min(Math.max(scrollSec, 0), lastStartSec);
+  const windowStartSec = scrollSec === null
+    ? lastStartSec
+    : Math.min(Math.max(scrollSec, 0), lastStartSec);
   const toggle = (id: string) => {
     setHidden((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
   };
@@ -106,12 +111,15 @@ export function AlgorithmComparison({
             <div className="load-legend">
               {shown.length === 0 ? (
                 <span>Turn an algorithm on to see its line</span>
-              ) : shown.map(({ run, index }) => (
-                <span key={run.algorithm}>
-                  <i style={{ background: colorOf(run.algorithm, index) }} />
-                  {nameOf(run.algorithm)} {mean(run.samples ?? [], metric.key).toFixed(metric.digits)}
-                </span>
-              ))}
+              ) : shown.map(({ run, index }) => {
+                const value = legendValue(reportOf(run, index, series, liveReport), metric.key);
+                return (
+                  <span key={run.algorithm}>
+                    <i style={{ background: colorOf(run.algorithm, index) }} />
+                    {nameOf(run.algorithm)}{value ? ` ${value}` : ''}
+                  </span>
+                );
+              })}
             </div>
             <ComparisonChart
               runs={shown.map(({ run, index }) => ({ run, color: colorOf(run.algorithm, index) }))}
@@ -215,8 +223,8 @@ function ComparisonChart({
             <title>{`${outage.server} stopped from ${formatTestSeconds(outage.stopAtSec)} to ${formatTestSeconds(outage.startAtSec)}`}</title>
           </rect>
           {outage.stopAtSec >= windowStartSec && (
-            <text x={xOf(outage.stopAtSec) + 3} y={PAD.top + 10} className="load-chart-outage-label">
-              {`S${outage.server.replace(/\D+/g, '')}`}
+            <text x={xOf(outage.stopAtSec) + 3} y={PAD.top + 14} className="load-chart-outage-label">
+              {`S-${outage.server.replace(/\D+/g, '')}`}
             </text>
           )}
         </g>
@@ -260,11 +268,36 @@ function ComparisonChart({
   );
 }
 
-function mean(samples: SeriesSample[], metric: MetricKey): number {
-  if (samples.length === 0) {
-    return 0;
+function reportOf(
+  run: SeriesRun,
+  index: number,
+  series: SeriesStatus,
+  liveReport?: TestMetrics | null,
+): TestMetrics | null {
+  const live = index === series.current && run.state === 'running' ? liveReport ?? null : null;
+  return run.report ?? live;
+}
+
+function legendValue(report: TestMetrics | null, metric: MetricKey): string {
+  if (!report) {
+    return '';
   }
-  return samples.reduce((sum, sample) => sum + sample[metric], 0) / samples.length;
+  switch (metric) {
+    case 'cpuMad':
+      return report.cpuMadMeanAvailable ? (report.cpuMadMeanPercent ?? 0).toFixed(2) : 'N/A';
+    case 'rps':
+      return report.rps.toFixed(2);
+    case 'p50Ms':
+      return report.p50Millis.toFixed(2);
+    case 'p95Ms':
+      return (report.p95Millis ?? 0).toFixed(2);
+    case 'p99Ms':
+      return report.p99Millis.toFixed(2);
+    case 'errorPct':
+      return report.errorRatePercent.toFixed(2);
+    default:
+      return '';
+  }
 }
 
 function smooth(samples: SeriesSample[], metric: MetricKey): { t: number; value: number }[] {

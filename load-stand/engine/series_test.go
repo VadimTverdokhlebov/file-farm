@@ -243,3 +243,69 @@ func TestClearResultsKeepsARunningSeries(t *testing.T) {
 		t.Fatal("the running series must stay")
 	}
 }
+
+func TestRestartSeriesRunKeepsFinishedRuns(t *testing.T) {
+	engine := &Engine{restartIndex: -1, seriesCooldownSec: minSeriesCooldownSec}
+	kept := []SeriesSample{{AtSec: 3, RPS: 10}}
+	engine.series = &SeriesStatus{
+		Active: false,
+		Phase:  SeriesFinished,
+		Runs: []SeriesRun{
+			{Algorithm: "am_ppo", State: RunDone, Samples: kept, Report: &TestMetrics{RPS: 10}},
+			{Algorithm: "ema", State: RunDone, Samples: []SeriesSample{{AtSec: 1}}, Report: &TestMetrics{RPS: 4}},
+		},
+	}
+	engine.seriesConfig = TestConfig{Concurrency: 1, Duration: 1, Algorithms: []string{"am_ppo", "ema"}}
+
+	if err := engine.RestartSeriesRun(1); err != nil {
+		t.Fatalf("restart: %v", err)
+	}
+	status := engine.SeriesSnapshot(true)
+	if !status.Active || status.Current != 1 || status.Runs[1].State != RunPending {
+		t.Fatalf("restarted run must be pending and active, got %+v", status)
+	}
+	if len(status.Runs[1].Samples) != 0 || status.Runs[1].Report != nil {
+		t.Fatal("the restarted run must drop its previous samples")
+	}
+	if len(status.Runs[0].Samples) != 1 || status.Runs[0].Samples[0].RPS != 10 || status.Runs[0].Report == nil {
+		t.Fatal("the finished run must keep its report")
+	}
+	engine.StopAll()
+}
+
+func TestRestartSeriesRunDuringASeriesOnlyAllowsTheCurrentRun(t *testing.T) {
+	engine := &Engine{restartIndex: -1}
+	engine.series = &SeriesStatus{
+		Active:  true,
+		Phase:   SeriesRunning,
+		Current: 1,
+		Runs: []SeriesRun{
+			{Algorithm: "am_ppo", State: RunDone, Samples: []SeriesSample{{AtSec: 2}}},
+			{Algorithm: "ema", State: RunRunning, Samples: []SeriesSample{{AtSec: 1}}},
+		},
+	}
+
+	if err := engine.RestartSeriesRun(0); err == nil {
+		t.Fatal("a finished run must not be restarted while another algorithm is under load")
+	}
+	if err := engine.RestartSeriesRun(1); err != nil {
+		t.Fatalf("current run: %v", err)
+	}
+	status := engine.SeriesSnapshot(true)
+	if status.Runs[1].State != RunPending || len(status.Runs[1].Samples) != 0 {
+		t.Fatal("the current run must be cleared")
+	}
+	if len(status.Runs[0].Samples) != 1 {
+		t.Fatal("the finished run must stay")
+	}
+	if !engine.restarting(1) {
+		t.Fatal("the series must retry the current algorithm")
+	}
+}
+
+func TestRestartSeriesRunNeedsASeries(t *testing.T) {
+	engine := &Engine{restartIndex: -1}
+	if err := engine.RestartSeriesRun(0); err == nil {
+		t.Fatal("restart without a series must fail")
+	}
+}

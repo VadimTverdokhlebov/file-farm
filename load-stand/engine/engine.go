@@ -128,9 +128,13 @@ type Engine struct {
 	cpuMADSum     float64
 	cpuMADSeconds int
 	builder       *PayloadBuilder
-	seriesMu      sync.Mutex
-	series        *SeriesStatus
-	seriesCancel  context.CancelFunc
+	seriesMu          sync.Mutex
+	series            *SeriesStatus
+	seriesCancel      context.CancelFunc
+	seriesConfig      TestConfig
+	seriesCooldownSec int
+	// restartIndex is the run to retry; -1 means none.
+	restartIndex int
 }
 
 func NewEngine(target string, protoDir string, envoyAdminURL string, loadBalancerURL string, prometheusURL string, dockerSocket string) (*Engine, error) {
@@ -164,6 +168,7 @@ func NewEngine(target string, protoDir string, envoyAdminURL string, loadBalance
 			EndpointStats:  make(map[string]*EndpointStats),
 			latencyBuckets: make([]atomic.Int64, len(latencyBucketBounds)+1),
 		},
+		restartIndex: -1,
 	}, nil
 }
 

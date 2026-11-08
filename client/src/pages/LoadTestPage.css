@@ -157,7 +157,7 @@
 }
 
 .load-algorithm-fields {
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: end;
 }
 
@@ -283,7 +283,7 @@
 
 .load-chart-outage-label {
   fill: #be123c;
-  font-size: 10px;
+  font-size: 15px;
   font-weight: 600;
 }
 
@@ -307,7 +307,7 @@
 
 .load-chart h3 {
   margin: 0 0 8px;
-  font-size: 14px;
+  font-size: 21px;
   line-height: 1.3;
   min-height: 1.3em;
   white-space: nowrap;
@@ -319,14 +319,14 @@
   gap: 6px 12px;
   margin-bottom: 6px;
   color: #5c6b7a;
-  font-size: 12px;
+  font-size: 18px;
   font-variant-numeric: tabular-nums;
 }
 
 .load-legend i {
   display: inline-block;
-  width: 14px;
-  height: 3px;
+  width: 21px;
+  height: 4.5px;
   margin-right: 6px;
   border-radius: 2px;
   vertical-align: middle;
@@ -350,7 +350,7 @@
 
 .load-chart-tick {
   fill: #5c6b7a;
-  font-size: 11px;
+  font-size: 19.8px;
 }
 
 .load-table-wrap {

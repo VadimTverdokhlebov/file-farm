@@ -27,6 +27,7 @@ func NewHandler(e *engine.Engine) *Handler {
 type wsCommand struct {
 	Action  string            `json:"action"`
 	Payload engine.TestConfig `json:"payload"`
+	Index   *int              `json:"index,omitempty"`
 }
 
 type jsonStats struct {
@@ -198,6 +199,14 @@ func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 			}
 		case "stop":
 			h.engine.StopAll()
+		case "restartRun":
+			if cmd.Index == nil {
+				h.sendError(conn, "restartRun needs the run index")
+				continue
+			}
+			if err := h.engine.RestartSeriesRun(*cmd.Index); err != nil {
+				h.sendError(conn, err.Error())
+			}
 		}
 	}
 }

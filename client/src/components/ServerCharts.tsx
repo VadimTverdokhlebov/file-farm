@@ -29,10 +29,10 @@ const RANGES = [
 type Range = (typeof RANGES)[number];
 
 const VIEW_W = 640;
-const VIEW_H = 206;
-const PAD = { top: 10, right: 12, bottom: 28, left: 42 };
+const VIEW_H = 228;
+const PAD = { top: 12, right: 34, bottom: 48, left: 67 };
 const MINOR_TICK = 3;
-const MAJOR_TICK = 7;
+const MAJOR_TICK = 8;
 
 // A server that the test takes down on a schedule, in the same clock as the history.
 export type ServerOutageBand = {
@@ -62,8 +62,8 @@ export function ServerCharts({
     RANGES.find((item) => item.ms === initialRangeMs) ?? RANGES[0],
   );
   const rangeMs = range.ms;
-  // null follows the latest data, a number is where the scrolled window starts.
-  const [scrollAt, setScrollAt] = useState<number | null>(null);
+  // 0 starts at the left; null follows the latest point after the user pans to the end.
+  const [scrollAt, setScrollAt] = useState<number | null>(0);
   const names = serverNames(history);
   const seriesPoints = originMs != null
     ? history.filter((point) => point.at >= originMs)
@@ -74,9 +74,11 @@ export function ServerCharts({
   const origin = originMs ?? firstAt;
   const lastStart = latestAt - rangeMs;
   const canScroll = lastStart > origin;
-  const windowStart = scrollAt === null || !canScroll
-    ? (canScroll ? lastStart : origin)
-    : Math.min(Math.max(scrollAt, origin), lastStart);
+  const windowStart = !canScroll
+    ? origin
+    : (scrollAt === null
+      ? lastStart
+      : Math.min(Math.max(scrollAt, origin), lastStart));
   const visible = seriesPoints.filter((point) => point.at >= windowStart && point.at <= windowStart + rangeMs);
 
   return (
@@ -202,8 +204,8 @@ function MetricChart({
               <title>{`${outage.server} stopped from ${formatTestSeconds(outage.stopAtSec)} to ${formatTestSeconds(outage.startAtSec)}`}</title>
             </rect>
             {outage.stopAtSec >= windowStartSec && (
-              <text x={xOfSec(outage.stopAtSec) + 3} y={PAD.top + 10} className="load-chart-outage-label">
-                {`S${outage.server.replace(/\D+/g, '')}`}
+              <text x={xOfSec(outage.stopAtSec) + 3} y={PAD.top + 14} className="load-chart-outage-label">
+                {`S-${outage.server.replace(/\D+/g, '')}`}
               </text>
             )}
           </g>
@@ -219,8 +221,8 @@ function MetricChart({
                 <title>{`${outage.server} stopped from ${formatClock(outage.fromMs)} to ${formatClock(outage.toMs)}`}</title>
               </rect>
               {outage.fromMs >= windowStart && (
-                <text x={left + 3} y={PAD.top + 10} className="load-chart-outage-label">
-                  {`S${outage.server.replace(/\D+/g, '')}`}
+                <text x={left + 3} y={PAD.top + 14} className="load-chart-outage-label">
+                  {`S-${outage.server.replace(/\D+/g, '')}`}
                 </text>
               )}
             </g>
@@ -445,5 +447,6 @@ function formatClock(timestamp: number): string {
 }
 
 function shortName(name: string): string {
-  return name.replace('file-farm-', '');
+  const number = name.replace(/\D+/g, '');
+  return number ? `S-${number}` : name;
 }

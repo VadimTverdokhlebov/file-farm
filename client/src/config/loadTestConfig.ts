@@ -24,6 +24,19 @@ export const trainingServerNames = [
   'file-farm-server-4',
 ];
 
+const ALGORITHM_SHORT_NAME: Record<string, string> = {
+  round_robin: 'RR',
+  weighted_round_robin: 'WRR',
+  least_request: 'LR',
+  random_choice: 'RC',
+  ema: 'EMA',
+  am_ppo: 'AM-PPO',
+};
+
+export function algorithmShortName(id: string, fallback?: string): string {
+  return ALGORITHM_SHORT_NAME[id] ?? fallback ?? id;
+}
+
 // A server taken down at stopAtSec of the test and started again at startAtSec.
 export type ScheduledOutage = {
   server: string;

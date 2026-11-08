@@ -5,6 +5,7 @@ import { AlgorithmComparison } from '../components/AlgorithmComparison';
 import { SeriesServerCharts } from '../components/SeriesServerCharts';
 import {
   ScheduledOutage,
+  algorithmShortName,
   maxTestFileSizeKb,
   testEndpoints,
   testPresets,
@@ -37,6 +38,7 @@ export const LoadTestPage = () => {
     serverHistory,
     startSeries,
     clearResults,
+    restartRun,
     series,
     seriesResults,
     stopTest,
@@ -317,9 +319,21 @@ export const LoadTestPage = () => {
                   disabled={busy || isLoading}
                   options={algorithms
                     .filter((algorithm) => algorithm.id === id || !compareIds.includes(algorithm.id))
-                    .map((algorithm) => ({ id: algorithm.id, label: algorithm.name }))}
+                    .map((algorithm) => ({ id: algorithm.id, label: algorithmShortName(algorithm.id, algorithm.name) }))}
                   onChange={(next) => changeAlgorithm(index, next)}
                 />
+                <Button
+                  variant="secondary"
+                  disabled={!canRestartRun(series, id)}
+                  onClick={() => {
+                    const runIndex = seriesRunIndex(series, id);
+                    if (runIndex >= 0) {
+                      restartRun(runIndex);
+                    }
+                  }}
+                >
+                  Restart
+                </Button>
                 <Button
                   variant="secondary"
                   disabled={busy || compareIds.length <= 1}
@@ -459,7 +473,12 @@ export const LoadTestPage = () => {
 
         <section className="load-card">
           <h2>Algorithm comparison charts</h2>
-          <AlgorithmComparison series={seriesResults} algorithms={algorithms} extraOutages={manualOutages} />
+          <AlgorithmComparison
+            series={seriesResults}
+            algorithms={algorithms}
+            extraOutages={manualOutages}
+            liveReport={status.stats.report}
+          />
         </section>
 
         <section className="load-card">
@@ -711,9 +730,26 @@ function formatClock(totalSeconds: number) {
   return [hours, minutes, rest].map((part) => String(part).padStart(2, '0')).join(':');
 }
 
+function seriesRunIndex(series: SeriesStatus | null, algorithmId: string): number {
+  return series?.runs.findIndex((run) => run.algorithm === algorithmId) ?? -1;
+}
+
+function canRestartRun(series: SeriesStatus | null, algorithmId: string): boolean {
+  const index = seriesRunIndex(series, algorithmId);
+  const run = index >= 0 ? series?.runs[index] : undefined;
+  if (!series || !run) {
+    return false;
+  }
+  if (series.active) {
+    return series.current === index && run.state === 'running';
+  }
+  return run.state === 'done' || run.state === 'stopped' || run.state === 'failed';
+}
+
 function currentAlgorithmName(series: SeriesStatus, algorithms: { id: string; name: string }[]) {
   const id = series.runs[series.current]?.algorithm ?? '';
-  return algorithms.find((algorithm) => algorithm.id === id)?.name ?? (id || '—');
+  const name = algorithms.find((algorithm) => algorithm.id === id)?.name;
+  return algorithmShortName(id, name) || '—';
 }
 
 type ReportRow = { key: string; name: string; running: boolean; report: TestMetrics };
@@ -730,7 +766,10 @@ function reportRows(
   }
   const rows: ReportRow[] = [];
   series.runs.forEach((run, index) => {
-    const name = algorithms.find((algorithm) => algorithm.id === run.algorithm)?.name ?? run.algorithm;
+    const name = algorithmShortName(
+      run.algorithm,
+      algorithms.find((algorithm) => algorithm.id === run.algorithm)?.name,
+    );
     const live = index === series.current && run.state === 'running' ? liveReport : null;
     const report = run.report ?? live;
     if (report) {
@@ -752,7 +791,7 @@ const reportColumns: { label: string; pick: (report: TestMetrics) => number | nu
     higher: false,
     text: (value) => value.toFixed(2),
   },
-  { label: 'Errors, % ↓', pick: (report) => report.errorRatePercent, higher: false, text: (value) => `${value.toFixed(2)}%` },
+  { label: 'Errors, % ↓', pick: (report) => report.errorRatePercent, higher: false, text: (value) => value.toFixed(2) },
 ];
 
 function ReportTable({ rows }: { rows: ReportRow[] }) {

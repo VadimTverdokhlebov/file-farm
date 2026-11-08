@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { algorithmShortName } from '../config/loadTestConfig';
 import { fetchLoadStandJson } from '../config/loadStand';
 import { BalancerAlgorithm, SeriesRun, SeriesStatus, ServerHistoryPoint, SeriesOutage } from '../types/loadTest';
 import { testClockOutages } from './chartMath';
@@ -20,7 +21,7 @@ export function SeriesServerCharts({
 }) {
   // undefined follows Now (live idle or the run in progress), a number is a saved run.
   const [picked, setPicked] = useState<number | null | undefined>(undefined);
-  const nameOf = (id: string) => algorithms.find((item) => item.id === id)?.name ?? id;
+  const nameOf = (id: string) => algorithmShortName(id, algorithms.find((item) => item.id === id)?.name);
   const runs = (series?.runs ?? []).map((run, index) => ({ run, index }));
   const isSaved = (run: SeriesRun) => run.state === 'done' || run.state === 'stopped';
   const live = runs.some(({ run }) => run.state === 'running');
@@ -57,7 +58,6 @@ export function SeriesServerCharts({
         <SavedRunCharts
           // A new series or a new run starts from a fresh fetch.
           key={`${chosen.run.startedAtMs ?? 0}-${chosen.index}`}
-          run={chosen.run}
           index={chosen.index}
           durationSec={series.durationSec}
           originMs={chosen.run.startedAtMs}
@@ -115,14 +115,12 @@ function LiveServerCharts({
 }
 
 function SavedRunCharts({
-  run,
   index,
   durationSec,
   originMs,
   scheduledOutages,
   liveFallback,
 }: {
-  run: SeriesRun;
   index: number;
   durationSec: number;
   originMs?: number;
@@ -162,17 +160,12 @@ function SavedRunCharts({
     return <p className="load-empty">{history ? 'This run has no saved server data.' : 'Loading saved data…'}</p>;
   }
   return (
-    <>
-      <p className="load-copy">
-        Saved run data{run.startedAtMs ? `, started at ${formatStart(run.startedAtMs)}` : ''}.
-      </p>
-      <ServerCharts
-        history={display}
-        initialRangeMs={rangeMsFor(durationSec * 1000)}
-        originMs={originMs}
-        scheduledOutages={scheduledOutages}
-      />
-    </>
+    <ServerCharts
+      history={display}
+      initialRangeMs={rangeMsFor(durationSec * 1000)}
+      originMs={originMs}
+      scheduledOutages={scheduledOutages}
+    />
   );
 }
 
@@ -182,6 +175,3 @@ function rangeMsFor(durationMs: number): number {
   return windows.find((window) => window >= durationMs) ?? windows[windows.length - 1];
 }
 
-function formatStart(timestamp: number): string {
-  return new Date(timestamp).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-}

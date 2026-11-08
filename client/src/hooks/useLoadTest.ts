@@ -10,6 +10,7 @@ interface UseLoadTestReturn {
   startSeries: (config: TestConfig) => void;
   // Same wipe Start does, without starting a run.
   clearResults: () => void;
+  restartRun: (index: number) => void;
   // Light status from the one-second message: phase, current run, run states.
   series: SeriesStatus | null;
   // The same series with every sample, fetched over HTTP.
@@ -265,6 +266,15 @@ export const useLoadTest = (): UseLoadTestReturn => {
 
   const stopTest = useCallback(() => sendCommand('stop'), [sendCommand]);
 
+  const restartRun = useCallback((index: number) => {
+    if (ws.current?.readyState === WebSocket.OPEN) {
+      setError(null);
+      ws.current.send(JSON.stringify({ action: 'restartRun', index }));
+    } else {
+      setError('WebSocket is not connected. Run: make up-load-stand');
+    }
+  }, []);
+
   const setServerPower = useCallback(async (name: string, action: 'start' | 'stop') => {
     setPendingServer(name);
     setError(null);
@@ -310,6 +320,7 @@ export const useLoadTest = (): UseLoadTestReturn => {
     serverHistory,
     startSeries,
     clearResults,
+    restartRun,
     series,
     seriesResults,
     stopTest,

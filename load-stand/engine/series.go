@@ -8,6 +8,15 @@ import (
 	"time"
 )
 
+type seriesRunEnd int
+
+const (
+	seriesRunComplete seriesRunEnd = iota
+	seriesRunStopped
+	seriesRunFailed
+	seriesRunRestarted
+)
+
 const (
 	defaultSeriesCooldownSec = 45
 	minSeriesCooldownSec     = 10
@@ -155,6 +164,7 @@ func (e *Engine) ClearResults() error {
 	}
 	e.series = nil
 	e.seriesCancel = nil
+	e.restartIndex = -1
 	e.seriesMu.Unlock()
 
 	e.mu.Lock()
@@ -245,11 +255,89 @@ func (e *Engine) StartSeries(rawConfig TestConfig) error {
 		Runs:        runs,
 	}
 	e.seriesCancel = cancel
+	e.seriesConfig = config
+	e.seriesCooldownSec = cooldownSec
+	e.restartIndex = -1
 	e.seriesMu.Unlock()
 
 	log.Printf("Starting series: algorithms=%v duration=%ds cooldown=%ds", algorithms, config.Duration, cooldownSec)
 	go e.runSeries(ctx, config, cooldownSec)
 	return nil
+}
+
+// RestartSeriesRun runs one algorithm again. Completed runs keep their samples.
+// During a series only the algorithm that is currently under load can be restarted.
+func (e *Engine) RestartSeriesRun(index int) error {
+	e.seriesMu.Lock()
+	if e.series == nil {
+		e.seriesMu.Unlock()
+		return fmt.Errorf("no series to restart")
+	}
+	if index < 0 || index >= len(e.series.Runs) {
+		e.seriesMu.Unlock()
+		return fmt.Errorf("no such run")
+	}
+	algorithm := e.series.Runs[index].Algorithm
+	state := e.series.Runs[index].State
+	active := e.series.Active
+	if active {
+		if e.series.Current != index || state != RunRunning {
+			e.seriesMu.Unlock()
+			return fmt.Errorf("only the running algorithm can be restarted during a series")
+		}
+		e.clearSeriesRunLocked(index)
+		e.restartIndex = index
+		e.seriesMu.Unlock()
+		e.StopTest()
+		log.Printf("Restarting series run %d (%s)", index+1, algorithm)
+		return nil
+	}
+	if state != RunDone && state != RunStopped && state != RunFailed {
+		e.seriesMu.Unlock()
+		return fmt.Errorf("algorithm %q has not finished a run", algorithm)
+	}
+	e.clearSeriesRunLocked(index)
+	ctx, cancel := context.WithCancel(context.Background())
+	e.series.Active = true
+	e.series.endedAt = time.Time{}
+	e.series.Phase = SeriesPreparing
+	e.series.Current = index
+	e.series.Message = ""
+	e.seriesCancel = cancel
+	e.restartIndex = -1
+	config := e.seriesConfig
+	cooldownSec := e.seriesCooldownSec
+	e.seriesMu.Unlock()
+	log.Printf("Restarting finished series run %d (%s)", index+1, algorithm)
+	go e.runOneSeriesRun(ctx, config, cooldownSec, index)
+	return nil
+}
+
+func (e *Engine) clearSeriesRunLocked(index int) {
+	run := &e.series.Runs[index]
+	run.State = RunPending
+	run.Error = ""
+	run.Report = nil
+	run.Samples = nil
+	run.StartedAtMs = 0
+	run.servers = nil
+}
+
+func (e *Engine) consumeRestart() (int, bool) {
+	e.seriesMu.Lock()
+	defer e.seriesMu.Unlock()
+	if e.series == nil || e.restartIndex < 0 {
+		return 0, false
+	}
+	index := e.restartIndex
+	e.restartIndex = -1
+	return index, true
+}
+
+func (e *Engine) restarting(index int) bool {
+	e.seriesMu.Lock()
+	defer e.seriesMu.Unlock()
+	return e.series != nil && e.restartIndex == index
 }
 
 // seriesElapsedSec counts up to now while the series goes, and up to its end afterwards.
@@ -300,46 +388,104 @@ func checkKnownAlgorithms(wanted []string, known []BalancerAlgorithm) error {
 
 func (e *Engine) runSeries(ctx context.Context, config TestConfig, cooldownSec int) {
 	runCount := len(e.SeriesSnapshot(false).Runs)
-	for index := 0; index < runCount; index++ {
-		if index > 0 && !e.seriesCooldown(ctx, index, cooldownSec) {
+	needCooldown := false
+	for index := 0; index < runCount; {
+		if needCooldown && !e.seriesCooldown(ctx, index, cooldownSec) {
+			if next, ok := e.consumeRestart(); ok {
+				index = next
+				needCooldown = true
+				continue
+			}
 			e.finishSeries(SeriesStopped, "")
 			return
 		}
-		e.updateSeries(func(series *SeriesStatus) {
-			series.Phase = SeriesPreparing
-			series.Current = index
-			series.CooldownLeftSec = 0
-		})
-		if err := e.waitForAllServers(ctx); err != nil {
-			e.failSeriesRun(ctx, index, err)
-			return
-		}
-
-		algorithm := e.SeriesSnapshot(false).Runs[index].Algorithm
-		runConfig := config
-		runConfig.Algorithm = algorithm
-		// Only the AM-PPO policy can be frozen; the flag means nothing to the rest.
-		runConfig.FreezeModel = config.FreezeModel && algorithm == "am_ppo"
-		if err := e.StartTest(runConfig); err != nil {
-			e.failSeriesRun(ctx, index, err)
-			return
-		}
-		e.mu.Lock()
-		startedAt := e.testStartedAt
-		e.mu.Unlock()
-		e.updateSeries(func(series *SeriesStatus) {
-			series.Phase = SeriesRunning
-			series.Runs[index].State = RunRunning
-			series.Runs[index].StartedAtMs = startedAt.UnixMilli()
-		})
-
-		stopped := e.collectSeriesRun(ctx, index)
-		if stopped {
+		switch e.executeSeriesRun(ctx, config, index) {
+		case seriesRunComplete:
+			index++
+			needCooldown = true
+		case seriesRunStopped:
 			e.finishSeries(SeriesStopped, "")
 			return
+		case seriesRunFailed:
+			return
+		case seriesRunRestarted:
+			if next, ok := e.consumeRestart(); ok {
+				index = next
+			}
+			needCooldown = true
 		}
 	}
 	e.finishSeries(SeriesFinished, "")
+}
+
+func (e *Engine) runOneSeriesRun(ctx context.Context, config TestConfig, cooldownSec int, index int) {
+	for {
+		if !e.seriesCooldown(ctx, index, cooldownSec) {
+			if next, ok := e.consumeRestart(); ok {
+				index = next
+				continue
+			}
+			e.finishSeries(SeriesStopped, "")
+			return
+		}
+		switch e.executeSeriesRun(ctx, config, index) {
+		case seriesRunComplete:
+			e.finishSeries(SeriesFinished, "")
+			return
+		case seriesRunStopped:
+			e.finishSeries(SeriesStopped, "")
+			return
+		case seriesRunFailed:
+			return
+		case seriesRunRestarted:
+			if next, ok := e.consumeRestart(); ok {
+				index = next
+			}
+		}
+	}
+}
+
+func (e *Engine) executeSeriesRun(ctx context.Context, config TestConfig, index int) seriesRunEnd {
+	e.waitForTestEnd(seriesStopTimeout)
+	e.updateSeries(func(series *SeriesStatus) {
+		series.Phase = SeriesPreparing
+		series.Current = index
+		series.CooldownLeftSec = 0
+	})
+	if err := e.waitForAllServers(ctx); err != nil {
+		if e.restarting(index) {
+			e.consumeRestart()
+			return seriesRunRestarted
+		}
+		e.failSeriesRun(ctx, index, err)
+		if ctx.Err() != nil {
+			return seriesRunStopped
+		}
+		return seriesRunFailed
+	}
+
+	algorithm := e.SeriesSnapshot(false).Runs[index].Algorithm
+	runConfig := config
+	runConfig.Algorithm = algorithm
+	// Only the AM-PPO policy can be frozen; the flag means nothing to the rest.
+	runConfig.FreezeModel = config.FreezeModel && algorithm == "am_ppo"
+	if err := e.StartTest(runConfig); err != nil {
+		if e.restarting(index) {
+			e.consumeRestart()
+			return seriesRunRestarted
+		}
+		e.failSeriesRun(ctx, index, err)
+		return seriesRunFailed
+	}
+	e.mu.Lock()
+	startedAt := e.testStartedAt
+	e.mu.Unlock()
+	e.updateSeries(func(series *SeriesStatus) {
+		series.Phase = SeriesRunning
+		series.Runs[index].State = RunRunning
+		series.Runs[index].StartedAtMs = startedAt.UnixMilli()
+	})
+	return e.collectSeriesRun(ctx, index)
 }
 
 func (e *Engine) updateSeries(update func(series *SeriesStatus)) {
@@ -437,9 +583,8 @@ func downServers(servers []ServerStatus) []string {
 	return down
 }
 
-// collectSeriesRun records one sample per second until the test ends. It reports
-// true when the series was stopped during the run.
-func (e *Engine) collectSeriesRun(ctx context.Context, index int) bool {
+// collectSeriesRun records one sample per second until the test ends.
+func (e *Engine) collectSeriesRun(ctx context.Context, index int) seriesRunEnd {
 	window := newSeriesWindow(seriesWindowSamples)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -452,12 +597,36 @@ func (e *Engine) collectSeriesRun(ctx context.Context, index int) bool {
 			stopped = true
 			e.StopTest()
 		case <-ticker.C:
+			if e.restarting(index) {
+				e.waitForTestEnd(seriesStopTimeout)
+				if ctx.Err() != nil {
+					e.consumeRestart()
+					e.endSeriesRun(ctx, index)
+					return seriesRunStopped
+				}
+				e.consumeRestart()
+				return seriesRunRestarted
+			}
 			e.mu.Lock()
 			running := e.isRunning
 			startedAt := e.testStartedAt
 			e.mu.Unlock()
 			if !running {
-				return e.endSeriesRun(ctx, index)
+				if ctx.Err() != nil {
+					if e.restarting(index) {
+						e.consumeRestart()
+					}
+					e.endSeriesRun(ctx, index)
+					return seriesRunStopped
+				}
+				if e.restarting(index) {
+					e.consumeRestart()
+					return seriesRunRestarted
+				}
+				if e.endSeriesRun(ctx, index) {
+					return seriesRunStopped
+				}
+				return seriesRunComplete
 			}
 
 			window.add(e.counterSnapshot())
@@ -478,6 +647,16 @@ func (e *Engine) collectSeriesRun(ctx context.Context, index int) bool {
 			// Stamped on the clock of the test, like the sample and the outage schedule. The wall
 			// clock of this machine jumps ahead every half a minute while the timers do not, so
 			// wall stamps put a stop at second 300 about 20 s after the strip that marks it.
+			if e.restarting(index) {
+				e.waitForTestEnd(seriesStopTimeout)
+				if ctx.Err() != nil {
+					e.consumeRestart()
+					e.endSeriesRun(ctx, index)
+					return seriesRunStopped
+				}
+				e.consumeRestart()
+				return seriesRunRestarted
+			}
 			point := ServerHistoryPoint{At: runPointTime(startedAt, second), Servers: withPowerState(servers)}
 			e.updateSeries(func(series *SeriesStatus) {
 				run := &series.Runs[index]
@@ -487,8 +666,19 @@ func (e *Engine) collectSeriesRun(ctx context.Context, index int) bool {
 		}
 	}
 	e.waitForTestEnd(seriesStopTimeout)
+	if ctx.Err() != nil {
+		if e.restarting(index) {
+			e.consumeRestart()
+		}
+		e.endSeriesRun(ctx, index)
+		return seriesRunStopped
+	}
+	if e.restarting(index) {
+		e.consumeRestart()
+		return seriesRunRestarted
+	}
 	e.endSeriesRun(ctx, index)
-	return true
+	return seriesRunStopped
 }
 
 func (e *Engine) endSeriesRun(ctx context.Context, index int) bool {
