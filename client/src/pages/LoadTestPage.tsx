@@ -17,9 +17,6 @@ import { useLoadTest } from '../hooks/useLoadTest';
 import { SeriesStatus, TestMetrics } from '../types/loadTest';
 import './LoadTestPage.css';
 
-// Pause between two runs; the load stand waits this long before the next algorithm.
-const seriesCooldownSec = 45;
-
 // Values of a page without a preset.
 // The algorithm a new page starts with.
 const defaultAlgorithmId = 'am_ppo';
@@ -111,7 +108,6 @@ export const LoadTestPage = () => {
       algorithm: '',
       algorithms: compareIds,
       freezeModel: compareFreeze,
-      cooldownSec: seriesCooldownSec,
       preset: presetId ?? 'custom',
       fileSizeMinKb,
       fileSizeMaxKb,

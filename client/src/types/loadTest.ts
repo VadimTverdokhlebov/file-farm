@@ -76,7 +76,6 @@ export interface TestConfig {
   waveIterations?: number;
   // A series runs the same test once for every listed algorithm.
   algorithms?: string[];
-  cooldownSec?: number;
   phases?: {
     concurrency: number;
     durationSec: number;

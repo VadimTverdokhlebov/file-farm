@@ -78,10 +78,8 @@ type TestConfig struct {
 	OutagePlan     []PlannedOutage `json:"outagePlan,omitempty"`
 	Phases         []LoadPhase     `json:"phases,omitempty"`
 	WaveIterations *int            `json:"waveIterations,omitempty"`
-	// Algorithms and CooldownSec only apply to a series: the same test is run once
-	// per algorithm, with a pause between the runs.
-	Algorithms  []string `json:"algorithms,omitempty"`
-	CooldownSec int      `json:"cooldownSec,omitempty"`
+	// Algorithms only apply to a series: the same test is run once per algorithm.
+	Algorithms []string `json:"algorithms,omitempty"`
 }
 
 // PlannedOutage is one server down from StopAtSec to StartAtSec, counted from the
@@ -100,22 +98,22 @@ type LoadPhase struct {
 }
 
 type Engine struct {
-	mu                    sync.Mutex
-	isRunning             bool
-	cancelFunc            context.CancelFunc
-	stats                 Stats
-	availableMethods      []string
-	target                string
-	conn                  *grpc.ClientConn
-	stub                  grpcdynamic.Stub
-	envoyAdminURL         string
-	loadBalancerURL       string
-	prometheusURL         string
-	docker                *dockerClient
-	serversToRestore      map[string]struct{}
+	mu               sync.Mutex
+	isRunning        bool
+	cancelFunc       context.CancelFunc
+	stats            Stats
+	availableMethods []string
+	target           string
+	conn             *grpc.ClientConn
+	stub             grpcdynamic.Stub
+	envoyAdminURL    string
+	loadBalancerURL  string
+	prometheusURL    string
+	docker           *dockerClient
+	serversToRestore map[string]struct{}
 	// forcedOff is a stop that was requested but Docker may still be shutting
 	// the container down. Charts must treat it as down immediately.
-	forcedOff map[string]struct{}
+	forcedOff             map[string]struct{}
 	loadGeneration        uint64
 	userCancels           []context.CancelFunc
 	testStartedAt         time.Time
@@ -128,11 +126,10 @@ type Engine struct {
 	cpuMADSum     float64
 	cpuMADSeconds int
 	builder       *PayloadBuilder
-	seriesMu          sync.Mutex
-	series            *SeriesStatus
-	seriesCancel      context.CancelFunc
-	seriesConfig      TestConfig
-	seriesCooldownSec int
+	seriesMu      sync.Mutex
+	series        *SeriesStatus
+	seriesCancel  context.CancelFunc
+	seriesConfig  TestConfig
 	// restartIndex is the run to retry; -1 means none.
 	restartIndex int
 }

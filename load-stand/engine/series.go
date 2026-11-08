@@ -18,9 +18,7 @@ const (
 )
 
 const (
-	defaultSeriesCooldownSec = 45
-	minSeriesCooldownSec     = 10
-	maxSeriesAlgorithms      = 8
+	maxSeriesAlgorithms = 8
 	// seriesWindowSamples is how many one-second snapshots the RPS, error and p95
 	// figures of a sample are averaged over.
 	seriesWindowSamples = 5
@@ -32,7 +30,6 @@ const (
 const (
 	SeriesPreparing = "preparing"
 	SeriesRunning   = "running"
-	SeriesCooldown  = "cooldown"
 	SeriesFinished  = "finished"
 	SeriesStopped   = "stopped"
 	SeriesFailed    = "failed"
@@ -207,13 +204,6 @@ func (e *Engine) StartSeries(rawConfig TestConfig) error {
 	if err := validateTestConfig(config); err != nil {
 		return err
 	}
-	cooldownSec := config.CooldownSec
-	if cooldownSec <= 0 {
-		cooldownSec = defaultSeriesCooldownSec
-	}
-	if cooldownSec < minSeriesCooldownSec {
-		cooldownSec = minSeriesCooldownSec
-	}
 
 	lookupCtx, lookupCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	configuration, err := e.GetBalancerConfiguration(lookupCtx)
@@ -256,12 +246,11 @@ func (e *Engine) StartSeries(rawConfig TestConfig) error {
 	}
 	e.seriesCancel = cancel
 	e.seriesConfig = config
-	e.seriesCooldownSec = cooldownSec
 	e.restartIndex = -1
 	e.seriesMu.Unlock()
 
-	log.Printf("Starting series: algorithms=%v duration=%ds cooldown=%ds", algorithms, config.Duration, cooldownSec)
-	go e.runSeries(ctx, config, cooldownSec)
+	log.Printf("Starting series: algorithms=%v duration=%ds", algorithms, config.Duration)
+	go e.runSeries(ctx, config)
 	return nil
 }
 
@@ -306,10 +295,9 @@ func (e *Engine) RestartSeriesRun(index int) error {
 	e.seriesCancel = cancel
 	e.restartIndex = -1
 	config := e.seriesConfig
-	cooldownSec := e.seriesCooldownSec
 	e.seriesMu.Unlock()
 	log.Printf("Restarting finished series run %d (%s)", index+1, algorithm)
-	go e.runOneSeriesRun(ctx, config, cooldownSec, index)
+	go e.runOneSeriesRun(ctx, config, index)
 	return nil
 }
 
@@ -386,23 +374,12 @@ func checkKnownAlgorithms(wanted []string, known []BalancerAlgorithm) error {
 	return nil
 }
 
-func (e *Engine) runSeries(ctx context.Context, config TestConfig, cooldownSec int) {
+func (e *Engine) runSeries(ctx context.Context, config TestConfig) {
 	runCount := len(e.SeriesSnapshot(false).Runs)
-	needCooldown := false
 	for index := 0; index < runCount; {
-		if needCooldown && !e.seriesCooldown(ctx, index, cooldownSec) {
-			if next, ok := e.consumeRestart(); ok {
-				index = next
-				needCooldown = true
-				continue
-			}
-			e.finishSeries(SeriesStopped, "")
-			return
-		}
 		switch e.executeSeriesRun(ctx, config, index) {
 		case seriesRunComplete:
 			index++
-			needCooldown = true
 		case seriesRunStopped:
 			e.finishSeries(SeriesStopped, "")
 			return
@@ -412,22 +389,13 @@ func (e *Engine) runSeries(ctx context.Context, config TestConfig, cooldownSec i
 			if next, ok := e.consumeRestart(); ok {
 				index = next
 			}
-			needCooldown = true
 		}
 	}
 	e.finishSeries(SeriesFinished, "")
 }
 
-func (e *Engine) runOneSeriesRun(ctx context.Context, config TestConfig, cooldownSec int, index int) {
+func (e *Engine) runOneSeriesRun(ctx context.Context, config TestConfig, index int) {
 	for {
-		if !e.seriesCooldown(ctx, index, cooldownSec) {
-			if next, ok := e.consumeRestart(); ok {
-				index = next
-				continue
-			}
-			e.finishSeries(SeriesStopped, "")
-			return
-		}
 		switch e.executeSeriesRun(ctx, config, index) {
 		case seriesRunComplete:
 			e.finishSeries(SeriesFinished, "")
@@ -524,26 +492,6 @@ func (e *Engine) finishSeries(phase string, message string) {
 		e.seriesCancel = nil
 	}
 	log.Printf("Series ended: %s", phase)
-}
-
-// seriesCooldown waits between two runs so the cluster settles after the
-// previous one. It reports false when the series was stopped meanwhile.
-func (e *Engine) seriesCooldown(ctx context.Context, next int, cooldownSec int) bool {
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	for left := cooldownSec; left > 0; left-- {
-		e.updateSeries(func(series *SeriesStatus) {
-			series.Phase = SeriesCooldown
-			series.Current = next
-			series.CooldownLeftSec = left
-		})
-		select {
-		case <-ctx.Done():
-			return false
-		case <-ticker.C:
-		}
-	}
-	return ctx.Err() == nil
 }
 
 // waitForAllServers holds the run back until every server is up, because a run

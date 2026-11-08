@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"context"
 	"math"
 	"strings"
 	"testing"
@@ -121,28 +120,6 @@ func TestSeriesSnapshotIsACopy(t *testing.T) {
 	}
 }
 
-func TestSeriesCooldownStopsWhenCancelled(t *testing.T) {
-	engine := &Engine{series: &SeriesStatus{Active: true, Runs: make([]SeriesRun, 2)}}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if engine.seriesCooldown(ctx, 1, 30) {
-		t.Fatal("a cancelled series must not wait out the cooldown")
-	}
-}
-
-func TestSeriesCooldownRecordsTheWait(t *testing.T) {
-	engine := &Engine{series: &SeriesStatus{Active: true, Runs: make([]SeriesRun, 2)}}
-	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
-	defer cancel()
-	if engine.seriesCooldown(ctx, 1, 30) {
-		t.Fatal("the context ran out before the cooldown, expected false")
-	}
-	status := engine.SeriesSnapshot(false)
-	if status.Phase != SeriesCooldown || status.Current != 1 || status.CooldownLeftSec >= 30 || status.CooldownLeftSec <= 0 {
-		t.Fatalf("unexpected status %+v", status)
-	}
-}
-
 func TestSeriesServerHistoryServesARunningRun(t *testing.T) {
 	engine := &Engine{series: &SeriesStatus{Runs: []SeriesRun{
 		{Algorithm: "a", State: RunDone, servers: []ServerHistoryPoint{{At: 1}}},
@@ -245,7 +222,7 @@ func TestClearResultsKeepsARunningSeries(t *testing.T) {
 }
 
 func TestRestartSeriesRunKeepsFinishedRuns(t *testing.T) {
-	engine := &Engine{restartIndex: -1, seriesCooldownSec: minSeriesCooldownSec}
+	engine := &Engine{restartIndex: -1}
 	kept := []SeriesSample{{AtSec: 3, RPS: 10}}
 	engine.series = &SeriesStatus{
 		Active: false,
