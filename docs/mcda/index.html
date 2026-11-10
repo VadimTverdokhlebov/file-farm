@@ -1,0 +1,1112 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Глава 4. Экспериментальное исследование эффективности балансировки нагрузки AM-PPO</title>
+<style>
+  @page { size: A4; margin: 2cm 1.5cm 2cm 3cm; }
+  html { background: #d9d9d9; }
+  body { margin: 0; padding: 24px 0; }
+  .page {
+    box-sizing: border-box; width: 21cm; margin: 0 auto; padding: 2cm 1.5cm 2cm 3cm;
+    background: #fff; color: #000; box-shadow: 0 0 8px rgba(0, 0, 0, .25);
+    font: 14pt/1.5 "Times New Roman", Times, serif; text-align: justify; hyphens: auto;
+  }
+  h1 { font-size: 14pt; text-align: center; text-transform: uppercase; margin: 0 0 1.5em; }
+  h2 { font-size: 14pt; margin: 1.5em 0 .5em; text-indent: 1.25cm; text-align: left; }
+  h3 { font-size: 14pt; font-style: italic; margin: 1.2em 0 .5em; text-indent: 1.25cm; text-align: left; }
+  p { margin: 0; text-indent: 1.25cm; }
+  p.where, p.flush { text-indent: 0; }
+  ul.dash { list-style: none; margin: 0; padding: 0; }
+  ul.dash li { text-indent: 1.25cm; }
+  ul.dash li::before { content: "– "; }
+  .eq { display: grid; grid-template-columns: 1fr auto; align-items: center; margin: .4em 0; text-indent: 0; }
+  .eq math { font-size: 15pt; justify-self: center; }
+  .eq-num { padding-left: 1em; }
+  math { font-family: "Cambria Math", "STIX Two Math", "Times New Roman", serif; }
+  figure { margin: .8em 0; text-align: center; text-indent: 0; break-inside: avoid; position: relative; }
+  figure svg, figure img { width: 100%; height: auto; display: block; margin: 0 auto; }
+  figcaption { line-height: 1.2; margin-top: .4em; text-align: center; }
+  .placeholder {
+    border: 1px dashed #777; padding: 2.2em 1em; color: #555; font-size: 12pt; line-height: 1.3;
+  }
+  .png-btn {
+    position: absolute; top: 0; right: 0; font: 11px/1 system-ui, sans-serif; padding: 4px 8px;
+    border: 1px solid #bbb; background: #f5f5f5; border-radius: 4px; cursor: pointer;
+  }
+  .tbl { margin: .8em 0; break-inside: avoid; text-indent: 0; }
+  .tbl-cap { text-align: left; line-height: 1.2; margin-bottom: .3em; }
+  table { width: 100%; border-collapse: collapse; font-size: 12pt; line-height: 1.2; }
+  th, td { border: 1px solid #000; padding: 3px 6px; text-align: center; }
+  td:first-child, th:first-child { text-align: left; }
+  th { font-weight: normal; }
+  td.b { font-weight: bold; }
+  @media print {
+    html { background: #fff; } body { padding: 0; }
+    .page { box-shadow: none; width: auto; padding: 0; }
+    .png-btn { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<h1>Глава 4. Программная реализация высоконагруженной системы и экспериментальное исследование эффективности балансировки нагрузки модифицированного алгоритма AM-PPO</h1>
+
+<!-- ===================================================================== -->
+<h2>4.1. Экспериментальный стенд и метрики оценки качества балансировки нагрузки</h2>
+
+<p>Для экспериментальной проверки разработанного метода AM-PPO был развёрнут испытательный стенд, реализующий
+структурно-функциональную схему распределённой системы, представленную на рисунке 1 (раздел 2.2), и
+воспроизводящий работу распределённого файлового сервиса в гетерогенном вычислительном кластере. Стенд
+запускался в ОС Ubuntu 24.04 и был развёрнут в среде Docker [10] на ПЭВМ со следующими характеристиками:
+Intel® Core™ i5-11400H CPU @ 2,70 ГГц (6 ядер, 12 потоков), 8 ГБ ОЗУ, выделенных виртуальной машине WSL 2.</p>
+
+<p>Стенд включает следующие компоненты:</p>
+<ul class="dash">
+  <li>четыре backend-узла S1–S4 – экземпляры gRPC-сервера файлового сервиса с различными ресурсными
+    ограничениями (таблица <span class="ref" data-ref="tab:nodes"></span>);</li>
+  <li>прокси-сервер Envoy (Data Plane), распределяющий входящие запросы между узлами в соответствии с весами
+    конечных точек, поступающими через службу обнаружения конечных точек (EDS);</li>
+  <li>контроллер балансировки (Control Plane), реализующий исследуемые алгоритмы и формирующий веса узлов;</li>
+  <li>система мониторинга Prometheus с агентом cAdvisor, собирающая загрузку процессора, памяти и дисковой
+    подсистемы, а также интенсивность и время обработки запросов на каждом узле;</li>
+  <li>нагрузочный стенд (генератор нагрузки клиентского слоя), формирующий поток запросов, управляющий
+    отключением узлов и регистрирующий показатели качества обслуживания.</li>
+</ul>
+
+<div class="tbl" data-id="nodes">
+  <div class="tbl-cap">Конфигурация узлов кластера</div>
+  <table>
+    <tr><th>Узел</th><th>CPU</th><th>Память</th><th>Процессы</th><th>Доля мощности кластера, %</th></tr>
+    <tr><td>S1</td><td>0,5 CPU</td><td>1,0 ГБ</td><td>1</td><td>12,5</td></tr>
+    <tr><td>S2</td><td>1 CPU</td><td>1,0 ГБ</td><td>1</td><td>25,0</td></tr>
+    <tr><td>S3</td><td>0,5 CPU</td><td>0,5 ГБ</td><td>1</td><td>12,5</td></tr>
+    <tr><td>S4</td><td>2 CPU</td><td>1,5 ГБ</td><td>2</td><td>50,0</td></tr>
+  </table>
+</div>
+
+<p>Кластер намеренно сделан гетерогенным: наиболее производительный узел S4 располагает вчетверо большей
+квотой процессорного времени, чем узлы S1 и S3. При равномерном распределении запросов каждый узел получает
+25% потока, и слабые узлы оказываются перегружены вдвое относительно своей доли мощности, тогда как узел S4
+остаётся недогруженным. Тем самым создаются условия, в которых качество балансировки непосредственно влияет
+на производительность системы в целом, а ограничение <i>U<sub>i</sub></i>(<i>t</i>)&nbsp;&lt;&nbsp;1 из постановки задачи
+раздела 2.1 может быть выполнено только при распределении весов с учётом мощности узлов.</p>
+
+<p>Нагрузку формирует заданное число параллельных потоков (виртуальных клиентов), каждый из которых циклически
+выполняет шесть типов запросов: загрузку, скачивание, удаление и сжатие файла, создание и получение
+пользователя. Перед началом нагрузки на сервис загружается восемь файлов, чтобы операции скачивания и удаления
+имели объекты для обработки. Уровень нагрузки выражается долей от предельной вычислительной мощности кластера и
+подбирался предварительно числом потоков и размером передаваемых файлов. Отказ узла эмулируется остановкой его
+контейнера через Docker API в заданную секунду теста и последующим запуском; на графиках интервалы
+недоступности узлов отмечены затенёнными полосами с подписью S-n.</p>
+
+<p>Каждый эксперимент выполнялся серией: один и тот же сценарий нагрузки последовательно воспроизводился для
+каждого из шести алгоритмов. Перед запуском очередного прогона стенд дожидался готовности всех узлов, чтобы
+все алгоритмы начинали работу на кластере одинакового состава. Для обеспечения сопоставимости результатов
+параметры политики AM-PPO, полученные в ходе обучения (раздел 3.4), в ходе испытаний фиксировались (онлайн-обучение
+отключалось), а решение принималось по математическому ожиданию распределения действий без исследовательского
+шума.</p>
+
+<p>Для объективной оценки качества балансировки использовались следующие метрики: пропускная способность (RPS),
+медианная задержка (<i>p</i><sub>50</sub>), 95-й (<i>p</i><sub>95</sub>) и хвостовой (<i>p</i><sub>99</sub>) перцентили времени
+ответа, доля ошибок (Error Rate), а также среднее абсолютное отклонение утилизации процессоров (CPU MAD – Mean
+Absolute Deviation). Пропускная способность определяется как число успешно обработанных запросов в единицу
+времени:</p>
+<div class="eq" data-id="rps"><math display="block">
+  <mi mathvariant="normal">RPS</mi><mo>=</mo><mfrac><msub><mi>N</mi><mtext>ok</mtext></msub><mi>T</mi></mfrac><mo>,</mo>
+</math></div>
+<p class="where">где <i>N</i><sub>ok</sub> – число успешных запросов; <i>T</i> – длительность теста, с. На графиках
+используется та же величина, вычисленная в скользящем окне длительностью 5&nbsp;с.</p>
+
+<p>Задержка обслуживания характеризуется перцентилями времени ответа <i>p</i><sub>50</sub>, <i>p</i><sub>95</sub> и
+<i>p</i><sub>99</sub>, которые вычисляются по гистограмме времени ответа:</p>
+<div class="eq" data-id="pct"><math display="block">
+  <msub><mi>p</mi><mi>q</mi></msub><mo>=</mo><msub><mi>b</mi><msup><mi>k</mi><mo>*</mo></msup></msub><mo>,</mo>
+  <mspace width="1.5em"/>
+  <msup><mi>k</mi><mo>*</mo></msup><mo>=</mo><mi mathvariant="normal">min</mi>
+  <mrow><mo>{</mo><mi>k</mi><mo>:</mo>
+  <munderover><mo>∑</mo><mrow><mi>l</mi><mo>=</mo><mn>1</mn></mrow><mi>k</mi></munderover><mrow><msub><mi>h</mi><mi>l</mi></msub></mrow>
+  <mo>≥</mo><mfrac><mi>q</mi><mn>100</mn></mfrac>
+  <munder><mo>∑</mo><mi>l</mi></munder><mrow><msub><mi>h</mi><mi>l</mi></msub></mrow><mo>}</mo></mrow><mo>,</mo>
+</math></div>
+<p class="where">где <i>h<sub>l</sub></i> – число запросов в <i>l</i>-м интервале гистограммы; <i>b<sub>k</sub></i> – верхняя граница
+<i>k</i>-го интервала. Медиана <i>p</i><sub>50</sub> отражает типичное время ответа, перцентиль <i>p</i><sub>95</sub> –
+время, в которое укладываются практически все запросы, <i>p</i><sub>99</sub> – редкие наихудшие случаи и
+соответствует показателю <i>T</i><sub>sys</sub><sup>p99</sup> математической модели раздела 2.1.</p>
+
+<p>Равномерность распределения нагрузки оценивается средним абсолютным отклонением утилизации процессоров
+работающих узлов, вычисляемым ежесекундно и усредняемым за тест:</p>
+<div class="eq" data-id="mad"><math display="block">
+  <msub><mi mathvariant="normal">MAD</mi><mtext>cpu</mtext></msub><mo>(</mo><mi>t</mi><mo>)</mo><mo>=</mo>
+  <mfrac><mn>1</mn><mrow><mi>N</mi><mo>(</mo><mi>t</mi><mo>)</mo></mrow></mfrac>
+  <munder><mo>∑</mo><mrow><mi>i</mi><mo>:</mo><msub><mtext>is_alive</mtext><mi>i</mi></msub><mo>=</mo><mn>1</mn></mrow></munder>
+  <mrow><mo>|</mo><msub><mi>U</mi><mi>i</mi></msub><mo>(</mo><mi>t</mi><mo>)</mo><mo>−</mo>
+  <mover><mi>U</mi><mo>¯</mo></mover><mo>(</mo><mi>t</mi><mo>)</mo><mo>|</mo></mrow><mo>,</mo>
+  <mspace width="1.5em"/>
+  <msub><mover><mi mathvariant="normal">MAD</mi><mo>¯</mo></mover><mtext>cpu</mtext></msub><mo>=</mo><mfrac><mn>1</mn><mi>T</mi></mfrac>
+  <munderover><mo>∑</mo><mrow><mi>t</mi><mo>=</mo><mn>1</mn></mrow><mi>T</mi></munderover>
+  <mrow><msub><mi mathvariant="normal">MAD</mi><mtext>cpu</mtext></msub><mo>(</mo><mi>t</mi><mo>)</mo></mrow><mo>,</mo>
+</math></div>
+<p class="where">где <i>N</i>(<i>t</i>) – число работающих узлов в секунду <i>t</i>; <i>U<sub>i</sub></i>(<i>t</i>) – нормализованный
+показатель утилизации процессора <i>i</i>-го узла относительно его квоты, %; <i>Ū</i>(<i>t</i>) – среднее арифметическое
+значение утилизации процессора по работающим узлам. Остановленные узлы в расчёт не включаются, поэтому отказ
+узла сам по себе не увеличивает показатель.</p>
+
+<p>Надёжность обслуживания характеризуется долей запросов, завершившихся ошибкой:</p>
+<div class="eq" data-id="err"><math display="block">
+  <mi mathvariant="normal">Err</mi><mo>=</mo>
+  <mfrac><msub><mi>N</mi><mtext>err</mtext></msub><mrow><msub><mi>N</mi><mtext>ok</mtext></msub><mo>+</mo><msub><mi>N</mi><mtext>err</mtext></msub></mrow></mfrac>
+  <mo>·</mo><mn>100</mn><mo>%</mo><mo>,</mo>
+</math></div>
+<p class="where">где <i>N</i><sub>err</sub> – число запросов, завершившихся ошибкой или превышением времени ожидания.</p>
+
+<!-- ===================================================================== -->
+<h2>4.2. Алгоритмы сравнения и математическая модель адаптивного алгоритма EMA</h2>
+
+<p>В сравнении участвовали шесть алгоритмов: четыре классических, реализованных средствами прокси-сервера
+Envoy или контроллера, адаптивный алгоритм на основе экспоненциального скользящего среднего (EMA) и
+разработанный метод AM-PPO. Все алгоритмы, задающие веса, оперируют целочисленными весами узлов с
+фиксированной суммой <i>W</i>&nbsp;=&nbsp;1000; при отказе узла его вес обнуляется, а Envoy исключает узел из выбора.</p>
+
+<p>Round Robin (RR) назначает всем узлам равные веса <i>w<sub>i</sub></i>&nbsp;=&nbsp;<i>W</i>&nbsp;/&nbsp;<i>N</i>
+и перебирает их по кругу, где <i>N</i> – число работающих узлов. Random Choice (RC) выбирает узел для каждого
+запроса равновероятно, с вероятностью 1&nbsp;/&nbsp;<i>N</i>. Оба алгоритма не учитывают ни производительность
+узлов, ни их текущее состояние.</p>
+
+<p>Weighted Round Robin (WRR) использует статические веса, пропорциональные квотам процессорного времени узлов:</p>
+<div class="eq" data-id="wrr"><math display="block">
+  <msub><mi>w</mi><mi>i</mi></msub><mo>=</mo><mi>W</mi><mo>·</mo>
+  <mfrac><msub><mi>cpu</mi><mi>i</mi></msub>
+    <mrow><munderover><mo>∑</mo><mrow><mi>j</mi><mo>=</mo><mn>1</mn></mrow><mi>N</mi></munderover><mrow><msub><mi>cpu</mi><mi>j</mi></msub></mrow></mrow></mfrac><mo>,</mo>
+</math></div>
+<p class="where">где <i>cpu<sub>i</sub></i> – квота CPU узла <i>i</i> из вектора ресурсов <i>C<sub>i</sub></i> (раздел 2.1). Алгоритм опирается
+на априорное знание конфигурации кластера, но не реагирует на фактическую загрузку узлов.</p>
+
+<p>Least Request (LR) реализует стратегию «выбора из двух»: для каждого запроса случайно выбираются два узла
+<i>a</i> и <i>b</i>, и запрос направляется на тот из них, у которого меньше активных запросов:</p>
+<div class="eq" data-id="lr"><math display="block">
+  <msup><mi>i</mi><mo>*</mo></msup><mo>=</mo>
+  <munder><mrow><mi mathvariant="normal">arg</mi><mo>&#8202;</mo><mi mathvariant="normal">min</mi></mrow>
+    <mrow><mi>i</mi><mo>∈</mo><mo>{</mo><mi>a</mi><mo>,</mo><mi>b</mi><mo>}</mo></mrow></munder>
+  <msub><mi>q</mi><mi>i</mi></msub><mo>(</mo><mi>t</mi><mo>)</mo><mo>,</mo>
+</math></div>
+<p class="where">где <i>q<sub>i</sub></i>(<i>t</i>) – число запросов, обрабатываемых узлом <i>i</i> в момент <i>t</i>.</p>
+
+<p>Для объективной оценки эффективности нейросетевого подхода в рамках единого контура управления (Control
+Plane) была реализована собственная стратегия адаптивной балансировки на основе экспоненциального скользящего
+среднего (EMA). Данный алгоритм выступает в роли сильного эталонного метода (baseline), динамически обновляющего
+веса конечных точек через протокол Envoy EDS с частотой 10&nbsp;Гц (интервал 0,1&nbsp;с).</p>
+
+<p>В качестве единственной метрики наблюдения алгоритм использует 99-й перцентиль задержки узла <i>x<sub>i</sub></i>(<i>t</i>),
+агрегируемый из Prometheus по минутным окнам. Значение скользящего среднего <i>ema<sub>i</sub></i>(<i>t</i>) для
+<i>i</i>-го узла вычисляется рекурсивно:</p>
+<div class="eq" data-id="ema"><math display="block">
+  <msub><mi>ema</mi><mi>i</mi></msub><mo stretchy="false">(</mo><mi>t</mi><mo stretchy="false">)</mo><mo>=</mo>
+  <mrow><mo>{</mo><mtable columnalign="left">
+    <mtr><mtd><msub><mi>x</mi><mi>i</mi></msub><mo stretchy="false">(</mo><mi>t</mi><mo stretchy="false">)</mo><mo>,</mo></mtd><mtd><mi>t</mi><mo>=</mo><mn>0</mn><mo>;</mo></mtd></mtr>
+    <mtr><mtd><mi>α</mi><mo>·</mo><msub><mi>x</mi><mi>i</mi></msub><mo stretchy="false">(</mo><mi>t</mi><mo stretchy="false">)</mo><mo>+</mo>
+      <mo stretchy="false">(</mo><mn>1</mn><mo>−</mo><mi>α</mi><mo stretchy="false">)</mo><mo>·</mo><msub><mi>ema</mi><mi>i</mi></msub><mo stretchy="false">(</mo><mi>t</mi><mo>−</mo><mn>1</mn><mo stretchy="false">)</mo><mo>,</mo></mtd>
+      <mtd><mi>t</mi><mo>&gt;</mo><mn>0</mn><mo>,</mo></mtd></mtr>
+  </mtable></mrow>
+</math></div>
+<p class="where">где <i>α</i>&nbsp;=&nbsp;0,2 – коэффициент сглаживания, формирующий эффективную «память» алгоритма глубиной
+около пяти шагов (1&nbsp;/&nbsp;<i>α</i>).</p>
+
+<p>Логика распределения базируется на обратной пропорциональности: чем ниже сглаженный показатель
+<i>p</i><sub>99</sub>, тем больший приоритет получает сервер. Итоговый нормализованный вес <i>w<sub>i</sub></i>&nbsp;≥&nbsp;1
+вычисляется относительно общей суммы весов кластера <i>W</i>&nbsp;=&nbsp;1000:</p>
+<div class="eq" data-id="ema-w"><math display="block">
+  <msub><mi>s</mi><mi>i</mi></msub><mo>=</mo><mfrac><mn>1</mn><mrow><msub><mi>ema</mi><mi>i</mi></msub><mo>(</mo><mi>t</mi><mo>)</mo></mrow></mfrac><mo>,</mo>
+  <mspace width="1.5em"/>
+  <msub><mi>w</mi><mi>i</mi></msub><mo>=</mo><mi>max</mi><mrow><mo>(</mo><mn>1</mn><mo>,</mo>
+  <mi mathvariant="normal">round</mi><mrow><mo>(</mo>
+  <mfrac><msub><mi>s</mi><mi>i</mi></msub><mrow><munderover><mo>∑</mo><mrow><mi>j</mi><mo>=</mo><mn>1</mn></mrow><mi>N</mi></munderover><mrow><msub><mi>s</mi><mi>j</mi></msub></mrow></mrow></mfrac>
+  <mo>·</mo><mi>W</mi><mo>)</mo></mrow><mo>)</mo></mrow><mo>.</mo>
+</math></div>
+<p class="where">Полученные веса передаются в Data Plane, где прокси-сервер применяет механизм Weighted Round Robin.</p>
+
+<p>Разработанный метод AM-PPO, математический аппарат и архитектура которого изложены в главе 3, формирует
+вектор весов по вектору состояния <i>S<sub>t</sub></i> из семи признаков на каждый узел с периодом
+Δ<i>t</i>&nbsp;=&nbsp;2&nbsp;с. Изменение веса узла складывается на 70% из предсказания сети-актора и на 30% из поправки
+CPU-контроллера и ограничено ±20 пунктами за шаг; вес недоступного узла блокируется маской. Дополнительно узел,
+вернувшийся после отказа, наращивает вес не более чем на 10 пунктов за решение, что защищает его от перегрузки
+сразу после запуска. В отличие от EMA, реагирующего на уже возникшую задержку, AM-PPO учитывает загрузку
+процессоров и долю квот узлов, то есть причину, а не следствие перегрузки.</p>
+
+<!-- ===================================================================== -->
+<h2>4.3. Экспериментальное исследование алгоритмов балансировки нагрузки</h2>
+
+<p>Исследование включало четыре эксперимента, различающихся уровнем нагрузки и характером отказов узлов.
+Длительность каждого прогона составляла 10 минут. В первом эксперименте все узлы доступны; во втором на время с
+3-й по 6-ю минуту отключается слабый узел S1; в третьем последовательно отключаются S1 (с 3-й по 7-ю минуту) и
+S3 (с 5-й по 8-ю минуту); в четвёртом с 3-й по 8-ю минуту отключается наиболее производительный узел S4. С учётом
+квот работающих узлов средняя по времени доступная мощность кластера составляла 100; 96,3; 91,3 и 75% соответственно.</p>
+
+<h3>4.3.1. Эксперимент 1: стабильная высокая нагрузка</h3>
+
+<p>В первом эксперименте оценивалась эффективность алгоритмов балансировки в условиях стабильной высокой
+нагрузки при доступности всех узлов кластера. Нагрузочным стендом эмулировалась стабильная нагрузка в 85–90% от
+предельной вычислительной мощности кластера при 28 параллельных потоках. Длительность эксперимента составляла
+10 минут. Результаты сравнения сведены в таблицу <span class="ref" data-ref="tab:e1"></span> и представлены на
+рисунках <span class="ref" data-ref="fig:e1-wrr..fig:e1-rr"></span>.</p>
+
+<div class="tbl" data-id="e1">
+  <div class="tbl-cap">Результаты эксперимента 1</div>
+  <table data-exp="0"></table>
+</div>
+
+<figure data-id="e1-wrr" data-img="figures/exp1/wrr.png"><figcaption>Графики сравнения алгоритмов AM-PPO и Weighted Round Robin</figcaption></figure>
+<figure data-id="e1-lr" data-img="figures/exp1/lr.png"><figcaption>Графики сравнения алгоритмов AM-PPO и Least Request</figcaption></figure>
+<figure data-id="e1-ema" data-img="figures/exp1/ema.png"><figcaption>Графики сравнения алгоритмов AM-PPO и EMA</figcaption></figure>
+<figure data-id="e1-rc" data-img="figures/exp1/rc.png"><figcaption>Графики сравнения алгоритмов AM-PPO и Random Choice</figcaption></figure>
+<figure data-id="e1-rr" data-img="figures/exp1/rr.png"><figcaption>Графики сравнения алгоритмов AM-PPO и Round Robin</figcaption></figure>
+
+<p>Алгоритм AM-PPO обеспечил наибольшую пропускную способность – 367,97 запросов в секунду, что на 4,8% выше,
+чем у WRR, на 15,4% выше, чем у EMA, и на 18,4% выше, чем у LR. Статические алгоритмы RR и RC уступили ему почти
+вдвое: равномерное распределение запросов перегружает слабые узлы S1 и S3, которые становятся узким местом всей
+системы, тогда как наиболее мощный узел S4 простаивает. Это же подтверждает показатель CPU MAD, составивший у RR
+и RC 25,6% и 24,5% против 4,2% у AM-PPO.</p>
+
+<p>По задержке <i>p</i><sub>95</sub> AM-PPO (325,66 мс) практически совпадает с WRR (329,74 мс) и на 30–35% опережает
+EMA и LR. Наименьшая задержка <i>p</i><sub>99</sub> достигнута алгоритмом LR (744,66 мс), который при выборе узла
+для каждого запроса учитывает длину очереди и тем самым отсекает наиболее длительные ожидания; однако эта
+особенность не компенсирует его отставания по пропускной способности и задержке <i>p</i><sub>95</sub>. Медианная
+задержка у всех алгоритмов, кроме LR, лежит в узком диапазоне 13,7–15,7 мс. Доля ошибок у AM-PPO минимальна
+(0,26%).</p>
+
+<h3>4.3.2. Эксперимент 2: отказ слабого узла</h3>
+
+<p>Во втором эксперименте оценивалась устойчивость алгоритмов балансировки к временному отказу слабого узла при
+высокой исходной нагрузке. Нагрузочным стендом эмулировалась стабильная нагрузка в 85–90% от предельной
+вычислительной мощности кластера при 28 параллельных потоках, с длительностью – 10 минут. На 3-й минуте
+принудительно отключался S1, который восстанавливался на 6-й минуте. Результаты сравнения сведены в таблицу
+<span class="ref" data-ref="tab:e2"></span> и представлены на рисунках
+<span class="ref" data-ref="fig:e2-wrr..fig:e2-rr"></span>.</p>
+
+<div class="tbl" data-id="e2">
+  <div class="tbl-cap">Результаты эксперимента 2</div>
+  <table data-exp="1"></table>
+</div>
+
+<figure data-id="e2-wrr" data-img="figures/exp2/wrr.png"><figcaption>Графики сравнения алгоритмов AM-PPO и Weighted Round Robin</figcaption></figure>
+<figure data-id="e2-lr" data-img="figures/exp2/lr.png"><figcaption>Графики сравнения алгоритмов AM-PPO и Least Request</figcaption></figure>
+<figure data-id="e2-ema" data-img="figures/exp2/ema.png"><figcaption>Графики сравнения алгоритмов AM-PPO и EMA</figcaption></figure>
+<figure data-id="e2-rc" data-img="figures/exp2/rc.png"><figcaption>Графики сравнения алгоритмов AM-PPO и Random Choice</figcaption></figure>
+<figure data-id="e2-rr" data-img="figures/exp2/rr.png"><figcaption>Графики сравнения алгоритмов AM-PPO и Round Robin</figcaption></figure>
+
+<p>Узел S1 обеспечивает лишь 12,5% мощности кластера, поэтому его отказ существенно не меняет соотношения
+сил. По пропускной способности WRR незначительно опередил AM-PPO (323,37 против 319,07 запросов в секунду, разница
+1,3%). Это объясняется тем, что при отказе узла статические веса WRR для оставшихся узлов сразу остаются
+пропорциональными их мощности, тогда как AM-PPO изменяет веса ограниченными шагами, а вернувшийся узел наращивает
+вес постепенно, чтобы не допустить его перегрузки сразу после запуска. Вместе с тем AM-PPO обеспечил меньшие
+задержки <i>p</i><sub>95</sub> (405,87 против 465,65 мс, на 12,8%) и <i>p</i><sub>99</sub> (755,90 против 1230,46 мс, на 38,6%),
+а также наиболее равномерную загрузку узлов (CPU MAD 3,89% против 6,80%).</p>
+
+<p>Наибольшую чувствительность к отказу показал RR: по сравнению с первым экспериментом его пропускная
+способность снизилась на 19,2%, а задержка <i>p</i><sub>95</sub> выросла на 31,4%. Доля ошибок наибольшая у RC
+(1,23%), наименьшая – у LR (0,26%); у AM-PPO и WRR она практически одинакова (0,48% и 0,46%).</p>
+
+<h3>4.3.3. Эксперимент 3: последовательные отказы при умеренной нагрузке</h3>
+
+<p>В третьем эксперименте оценивалась способность алгоритмов балансировки адаптироваться к последовательным
+изменениям состава доступных узлов при умеренной исходной нагрузке. Нагрузочным стендом эмулировалась стабильная
+нагрузка в 55–60% от предельной вычислительной мощности кластера при 6 параллельных потоках, длительность –
+10 минут. На 3-й минуте принудительно отключался сервер S1, который восстанавливался на 7-й минуте. Сервер S3
+отключался на 5-й минуте и восстанавливался на 8-й. Результаты сравнения сведены в таблицу
+<span class="ref" data-ref="tab:e3"></span> и представлены на рисунках
+<span class="ref" data-ref="fig:e3-wrr..fig:e3-rr"></span>.</p>
+
+<div class="tbl" data-id="e3">
+  <div class="tbl-cap">Результаты эксперимента 3</div>
+  <table data-exp="2"></table>
+</div>
+
+<figure data-id="e3-wrr" data-img="figures/exp3/wrr.png"><figcaption>Графики сравнения алгоритмов AM-PPO и Weighted Round Robin</figcaption></figure>
+<figure data-id="e3-lr" data-img="figures/exp3/lr.png"><figcaption>Графики сравнения алгоритмов AM-PPO и Least Request</figcaption></figure>
+<figure data-id="e3-ema" data-img="figures/exp3/ema.png"><figcaption>Графики сравнения алгоритмов AM-PPO и EMA</figcaption></figure>
+<figure data-id="e3-rc" data-img="figures/exp3/rc.png"><figcaption>Графики сравнения алгоритмов AM-PPO и Random Choice</figcaption></figure>
+<figure data-id="e3-rr" data-img="figures/exp3/rr.png"><figcaption>Графики сравнения алгоритмов AM-PPO и Round Robin</figcaption></figure>
+
+<p>При умеренной нагрузке очереди на узлах короткие, поэтому задержки всех алгоритмов на порядок ниже, чем в
+первых двух экспериментах. AM-PPO обеспечил наибольшую пропускную способность (626,97 запросов в секунду) и
+наименьшую задержку <i>p</i><sub>95</sub> (29,51 мс), опередив ближайшего конкурента WRR на 2,7% и 10,8%
+соответственно. Различия между AM-PPO и WRR по остальным показателям невелики, а по доле ошибок WRR оказался
+лучшим (0,08% против 0,13%).</p>
+
+<p>Показательно поведение алгоритма LR: при шести потоках на каждом узле одновременно обрабатывается не более
+одного-двух запросов, и критерий выбора по числу активных запросов теряет информативность. В результате выбор
+LR приближается к случайному, и его показатель CPU MAD (20,53%) оказывается близок к RC (23,52%) и RR (21,51%),
+тогда как у AM-PPO он составляет 4,11%.</p>
+
+<h3>4.3.4. Эксперимент 4: отказ наиболее производительного узла</h3>
+
+<p>В четвёртом эксперименте оценивалась устойчивость алгоритмов балансировки к отказу наиболее производительного
+узла при нагрузке, близкой к предельной. Нагрузочным стендом эмулировалась стабильная нагрузка в 95–100% от
+предельной мощности кластера при 32 параллельных потоках, длительность – 10 минут. Сервер S4 отключался на
+3-й минуте и восстанавливался на 8-й. Результаты сравнения сведены в таблицу
+<span class="ref" data-ref="tab:e4"></span> и представлены на рисунках
+<span class="ref" data-ref="fig:e4-wrr..fig:e4-rr"></span>.</p>
+
+<div class="tbl" data-id="e4">
+  <div class="tbl-cap">Результаты эксперимента 4</div>
+  <table data-exp="3"></table>
+</div>
+
+<figure data-id="e4-wrr" data-img="figures/exp4/wrr.png"><figcaption>Графики сравнения алгоритмов AM-PPO и Weighted Round Robin</figcaption></figure>
+<figure data-id="e4-lr" data-img="figures/exp4/lr.png"><figcaption>Графики сравнения алгоритмов AM-PPO и Least Request</figcaption></figure>
+<figure data-id="e4-ema" data-img="figures/exp4/ema.png"><figcaption>Графики сравнения алгоритмов AM-PPO и EMA</figcaption></figure>
+<figure data-id="e4-rc" data-img="figures/exp4/rc.png"><figcaption>Графики сравнения алгоритмов AM-PPO и Random Choice</figcaption></figure>
+<figure data-id="e4-rr" data-img="figures/exp4/rr.png"><figcaption>Графики сравнения алгоритмов AM-PPO и Round Robin</figcaption></figure>
+
+<p>Отказ узла S4 на пять минут лишает кластер в среднем четверти мощности, а на время отказа – половины. В этих
+условиях различия между адаптивными алгоритмами сокращаются: пропускная способность AM-PPO, EMA, LR и WRR лежит
+в диапазоне 246–260 запросов в секунду, при этом AM-PPO сохраняет первенство (260,02). Наименьшая задержка
+<i>p</i><sub>95</sub> вновь у AM-PPO (647,22 мс): на 6,5% меньше, чем у LR, на 11,1% – чем у EMA, и на 13,8% – чем у WRR.
+По задержке <i>p</i><sub>99</sub> лучшим оказался LR (961,86 мс), по равномерности загрузки – EMA (CPU MAD 4,54%).</p>
+
+<p>Статические алгоритмы RR и RC демонстрируют наименьшую медианную задержку (13,19 и 16,78 мс) при
+задержке <i>p</i><sub>95</sub>, в 2,3 раза превышающей результат AM-PPO. Такое сочетание свидетельствует о
+бимодальном распределении времени ответа: запросы, попавшие на недогруженный узел, обслуживаются быстро, а
+попавшие на перегруженный – длительно ожидают в очереди. Медиана в этом случае не отражает качество
+обслуживания, что учитывается при выборе весов критериев в разделе 4.4.</p>
+
+<!-- ===================================================================== -->
+<h2>4.4. Мультикритериальная оценка эффективности алгоритмов</h2>
+
+<p>Результаты экспериментов показывают, что ни один алгоритм не является лучшим одновременно по всем
+показателям: AM-PPO лидирует по пропускной способности и задержке <i>p</i><sub>95</sub>, LR в ряде сценариев – по
+задержке <i>p</i><sub>99</sub>, статические алгоритмы – по медианной задержке. Для получения обобщённой оценки
+применены методы многокритериального принятия решений: аддитивная свёртка критериев (WSM), метод TOPSIS и метод
+взвешенных рангов.</p>
+
+<p>Для каждого эксперимента <i>k</i>&nbsp;=&nbsp;1,&nbsp;…,&nbsp;<i>K</i> формируется матрица решений:</p>
+<div class="eq" data-id="matrix"><math display="block">
+  <msup><mi>X</mi><mrow><mo>(</mo><mi>k</mi><mo>)</mo></mrow></msup><mo>=</mo>
+  <msub><mrow><mo>‖</mo><msubsup><mi>x</mi><mrow><mi>i</mi><mi>j</mi></mrow><mrow><mo>(</mo><mi>k</mi><mo>)</mo></mrow></msubsup><mo>‖</mo></mrow>
+  <mrow><mi>m</mi><mo>×</mo><mi>n</mi></mrow></msub><mo>,</mo>
+</math></div>
+<p class="where">где <i>x<sub>ij</sub></i> – значение <i>j</i>-го критерия для <i>i</i>-го алгоритма; <i>m</i>&nbsp;=&nbsp;6 – число
+алгоритмов; <i>n</i>&nbsp;=&nbsp;6 – число критериев; <i>K</i>&nbsp;=&nbsp;4 – число экспериментов. Множество критериев
+разбивается на максимизируемые <i>J</i><sup>+</sup>&nbsp;=&nbsp;{RPS} и минимизируемые
+<i>J</i><sup>−</sup>&nbsp;=&nbsp;{<i>p</i><sub>50</sub>, <i>p</i><sub>95</sub>, <i>p</i><sub>99</sub>, CPU MAD, Err}.</p>
+
+<p>Поскольку критерии измеряются в разных единицах, перед свёрткой они приводятся к безразмерному виду
+линейной нормализацией внутри каждого эксперимента:</p>
+<div class="eq" data-id="norm"><math display="block">
+  <msub><mi>r</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>=</mo>
+  <mrow><mo>{</mo><mtable columnalign="left">
+    <mtr><mtd><mfrac><mrow><msub><mi>x</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>−</mo><msubsup><mi>x</mi><mi>j</mi><mi>min</mi></msubsup></mrow>
+      <mrow><msubsup><mi>x</mi><mi>j</mi><mi>max</mi></msubsup><mo>−</mo><msubsup><mi>x</mi><mi>j</mi><mi>min</mi></msubsup></mrow></mfrac><mo>,</mo></mtd>
+      <mtd><mi>j</mi><mo>∈</mo><msup><mi>J</mi><mo>+</mo></msup><mo>;</mo></mtd></mtr>
+    <mtr><mtd><mfrac><mrow><msubsup><mi>x</mi><mi>j</mi><mi>max</mi></msubsup><mo>−</mo><msub><mi>x</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub></mrow>
+      <mrow><msubsup><mi>x</mi><mi>j</mi><mi>max</mi></msubsup><mo>−</mo><msubsup><mi>x</mi><mi>j</mi><mi>min</mi></msubsup></mrow></mfrac><mo>,</mo></mtd>
+      <mtd><mi>j</mi><mo>∈</mo><msup><mi>J</mi><mo>−</mo></msup><mo>,</mo></mtd></mtr>
+  </mtable></mrow>
+</math></div>
+<p class="where">где <i>x<sub>j</sub></i><sup>min</sup> и <i>x<sub>j</sub></i><sup>max</sup> – наименьшее и наибольшее значения
+<i>j</i>-го критерия среди алгоритмов. Нормированное значение <i>r<sub>ij</sub></i>&nbsp;∈&nbsp;[0;&nbsp;1] равно единице для
+лучшего алгоритма по данному критерию и нулю – для худшего.</p>
+
+<p>Интегральная оценка по методу аддитивной свёртки:</p>
+<div class="eq" data-id="wsm"><math display="block">
+  <msub><mi>S</mi><mi>i</mi></msub><mo>=</mo>
+  <munderover><mo>∑</mo><mrow><mi>j</mi><mo>=</mo><mn>1</mn></mrow><mi>n</mi></munderover>
+  <mrow><msub><mi>w</mi><mi>j</mi></msub><msub><mi>r</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub></mrow><mo>,</mo>
+  <mspace width="1.5em"/>
+  <munderover><mo>∑</mo><mrow><mi>j</mi><mo>=</mo><mn>1</mn></mrow><mi>n</mi></munderover>
+  <mrow><msub><mi>w</mi><mi>j</mi></msub></mrow><mo>=</mo><mn>1</mn><mo>,</mo>
+</math></div>
+<p class="where">где <i>w<sub>j</sub></i> – весовой коэффициент <i>j</i>-го критерия.</p>
+
+<p>Весовые коэффициенты назначены исходя из того, насколько критерий отражает качество распределения нагрузки,
+воспринимаемое клиентами сервиса (таблица <span class="ref" data-ref="tab:weights"></span>).</p>
+
+<div class="tbl" data-id="weights">
+  <div class="tbl-cap">Весовые коэффициенты критериев</div>
+  <table>
+    <tr><th>Критерий</th><th>RPS</th><th><i>p</i><sub>50</sub></th><th><i>p</i><sub>95</sub></th><th><i>p</i><sub>99</sub></th><th>CPU MAD</th><th>Err</th></tr>
+    <tr><td>Направление</td><td>max</td><td>min</td><td>min</td><td>min</td><td>min</td><td>min</td></tr>
+    <tr><td>Вес <i>w<sub>j</sub></i></td><td>0,35</td><td>0,15</td><td>0,30</td><td>0,10</td><td>0,05</td><td>0,05</td></tr>
+  </table>
+</div>
+
+<p>Основной вес отдан пропускной способности и задержке <i>p</i><sub>95</sub>: именно они определяют, сколько запросов
+обслуживает кластер и за какое время их получает подавляющее большинство клиентов. Медианной задержке назначен
+умеренный вес, так как, по результатам эксперимента 4, она может скрывать перегрузку части узлов. Задержка
+<i>p</i><sub>99</sub> определяется одним процентом наиболее медленных запросов и в пределах одного прогона подвержена
+значительным случайным колебаниям, поэтому её вес снижен. Показатель CPU MAD характеризует внутреннее состояние
+кластера и сказывается на клиентах опосредованно, через пропускную способность и задержки, уже учтённые
+другими критериями. Доля ошибок у всех алгоритмов не превышает 1,3%, а различия между ними сопоставимы со
+случайным разбросом, поэтому этот критерий также имеет малый вес.</p>
+
+<p>Метод TOPSIS ранжирует альтернативы по близости к идеальному решению. Применяется векторная нормализация с
+учётом весов:</p>
+<div class="eq" data-id="topsis-v"><math display="block">
+  <msub><mi>v</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>=</mo><msub><mi>w</mi><mi>j</mi></msub>
+  <mfrac><msub><mi>x</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub>
+    <msqrt><munderover><mo>∑</mo><mrow><mi>l</mi><mo>=</mo><mn>1</mn></mrow><mi>m</mi></munderover>
+      <mrow><msubsup><mi>x</mi><mrow><mi>l</mi><mi>j</mi></mrow><mn>2</mn></msubsup></mrow></msqrt></mfrac><mo>.</mo>
+</math></div>
+<p class="flush">Идеальное <i>A</i><sup>+</sup> и антиидеальное <i>A</i><sup>−</sup> решения составляются из лучших и худших
+значений каждого критерия:</p>
+<div class="eq" data-id="topsis-a"><math display="block">
+  <msubsup><mi>v</mi><mi>j</mi><mo>+</mo></msubsup><mo>=</mo>
+  <mrow><mo>{</mo><mtable columnalign="left">
+    <mtr><mtd><munder><mi>max</mi><mi>i</mi></munder><msub><mi>v</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>,</mo></mtd><mtd><mi>j</mi><mo>∈</mo><msup><mi>J</mi><mo>+</mo></msup><mo>;</mo></mtd></mtr>
+    <mtr><mtd><munder><mi>min</mi><mi>i</mi></munder><msub><mi>v</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>,</mo></mtd><mtd><mi>j</mi><mo>∈</mo><msup><mi>J</mi><mo>−</mo></msup><mo>;</mo></mtd></mtr>
+  </mtable></mrow>
+  <mspace width="1.5em"/>
+  <msubsup><mi>v</mi><mi>j</mi><mo>−</mo></msubsup><mo>=</mo>
+  <mrow><mo>{</mo><mtable columnalign="left">
+    <mtr><mtd><munder><mi>min</mi><mi>i</mi></munder><msub><mi>v</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>,</mo></mtd><mtd><mi>j</mi><mo>∈</mo><msup><mi>J</mi><mo>+</mo></msup><mo>;</mo></mtd></mtr>
+    <mtr><mtd><munder><mi>max</mi><mi>i</mi></munder><msub><mi>v</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>,</mo></mtd><mtd><mi>j</mi><mo>∈</mo><msup><mi>J</mi><mo>−</mo></msup><mo>.</mo></mtd></mtr>
+  </mtable></mrow>
+</math></div>
+<p class="flush">Расстояния до идеального и антиидеального решений и коэффициент относительной близости:</p>
+<div class="eq" data-id="topsis-d"><math display="block">
+  <msubsup><mi>D</mi><mi>i</mi><mo>±</mo></msubsup><mo>=</mo>
+  <msqrt><munderover><mo>∑</mo><mrow><mi>j</mi><mo>=</mo><mn>1</mn></mrow><mi>n</mi></munderover>
+    <mrow><msup><mrow><mo>(</mo><msub><mi>v</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>−</mo><msubsup><mi>v</mi><mi>j</mi><mo>±</mo></msubsup><mo>)</mo></mrow><mn>2</mn></msup></mrow></msqrt><mo>,</mo>
+  <mspace width="1.5em"/>
+  <msub><mi>C</mi><mi>i</mi></msub><mo>=</mo>
+  <mfrac><msubsup><mi>D</mi><mi>i</mi><mo>−</mo></msubsup><mrow><msubsup><mi>D</mi><mi>i</mi><mo>+</mo></msubsup><mo>+</mo><msubsup><mi>D</mi><mi>i</mi><mo>−</mo></msubsup></mrow></mfrac><mo>.</mo>
+</math></div>
+<p class="flush">Коэффициент <i>C<sub>i</sub></i>&nbsp;∈&nbsp;[0;&nbsp;1] равен единице, если алгоритм совпадает с идеальным решением.</p>
+
+<p>В методе взвешенных рангов каждому алгоритму по каждому критерию присваивается ранг
+<i>ρ<sub>ij</sub></i>&nbsp;∈&nbsp;{1,&nbsp;…,&nbsp;<i>m</i>} (1 – лучший), после чего вычисляется средневзвешенный ранг:</p>
+<div class="eq" data-id="rank"><math display="block">
+  <msub><mi>R</mi><mi>i</mi></msub><mo>=</mo>
+  <munderover><mo>∑</mo><mrow><mi>j</mi><mo>=</mo><mn>1</mn></mrow><mi>n</mi></munderover>
+  <mrow><msub><mi>w</mi><mi>j</mi></msub><msub><mi>ρ</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub></mrow><mo>.</mo>
+</math></div>
+
+<p>Итоговая оценка алгоритма по совокупности экспериментов вычисляется как среднее арифметическое оценок по
+отдельным экспериментам:</p>
+<div class="eq" data-id="mean"><math display="block">
+  <msub><mover><mi>S</mi><mo>¯</mo></mover><mi>i</mi></msub><mo>=</mo><mfrac><mn>1</mn><mi>K</mi></mfrac>
+  <munderover><mo>∑</mo><mrow><mi>k</mi><mo>=</mo><mn>1</mn></mrow><mi>K</mi></munderover>
+  <mrow><msubsup><mi>S</mi><mi>i</mi><mrow><mo>(</mo><mi>k</mi><mo>)</mo></mrow></msubsup></mrow><mo>.</mo>
+</math></div>
+
+<p>Результаты расчёта интегральной оценки по каждому эксперименту приведены в таблице
+<span class="ref" data-ref="tab:scores"></span> и на рисунке <span class="ref" data-ref="fig:scores"></span>,
+сопоставление трёх методов – в таблице <span class="ref" data-ref="tab:methods"></span> и на рисунке
+<span class="ref" data-ref="fig:overall"></span>.</p>
+
+<div class="tbl" data-id="scores">
+  <div class="tbl-cap">Интегральная оценка <i>S<sub>i</sub></i> (WSM) по экспериментам</div>
+  <table data-table="scores"></table>
+</div>
+
+<figure data-id="scores" data-chart="scores">
+  <figcaption>Интегральная оценка алгоритмов по экспериментам</figcaption>
+</figure>
+
+<div class="tbl" data-id="methods">
+  <div class="tbl-cap">Сопоставление методов свёртки (среднее по экспериментам)</div>
+  <table data-table="methods"></table>
+</div>
+
+<figure data-id="overall" data-chart="overall">
+  <figcaption>Итоговый рейтинг алгоритмов по методам WSM и TOPSIS</figcaption>
+</figure>
+
+<p>Все три метода дают одинаковый порядок алгоритмов: AM-PPO, WRR, EMA, LR, RR, RC. Средняя интегральная оценка
+AM-PPO составила 0,889, что на 8,4% выше, чем у WRR (0,820), и на 16,1% выше, чем у EMA (0,766). AM-PPO занимает
+первое место в каждом из четырёх экспериментов, однако величина его отрыва зависит от условий. Наибольший отрыв
+наблюдается в эксперименте 1 (0,956 против 0,852 у WRR), наименьший – в эксперименте 4 (0,842 против 0,837 у EMA):
+при выпадении узла с половиной мощности кластера резерв для перераспределения нагрузки невелик, и результаты
+адаптивных алгоритмов сближаются. Статические алгоритмы RR и RC получили оценки ниже 0,21, то есть в условиях
+неоднородного кластера близки к наихудшему решению по большинству критериев.</p>
+
+<p>Средние нормированные значения критериев (рисунок <span class="ref" data-ref="fig:heat"></span>) показывают, за
+счёт чего достигнута итоговая оценка. AM-PPO близок к лучшему значению по пропускной способности (0,99),
+задержке <i>p</i><sub>95</sub> (1,00) и равномерности загрузки (0,97), но занимает промежуточное положение по
+медианной задержке (0,44). У WRR профиль сходный, но смещён вниз по всем основным критериям. Профиль LR,
+напротив, неоднороден: высокий балл по <i>p</i><sub>99</sub> (0,91) сочетается с низкими баллами по медианной
+задержке и доле ошибок.</p>
+
+<figure data-id="heat" data-chart="heat">
+  <figcaption>Средние нормированные значения критериев (1 – лучший результат, 0 – худший)</figcaption>
+</figure>
+
+<p>Для анализа компромиссов между критериями рассчитан относительный выигрыш алгоритма AM-PPO у каждого из
+остальных алгоритмов:</p>
+<div class="eq" data-id="gain"><math display="block">
+  <msub><mi>δ</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>=</mo>
+  <mrow><mo>{</mo><mtable columnalign="left">
+    <mtr><mtd><mfrac><mrow><msub><mi>x</mi><mrow><mn>0</mn><mi>j</mi></mrow></msub><mo>−</mo><msub><mi>x</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub></mrow><msub><mi>x</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub></mfrac><mo>·</mo><mn>100</mn><mo>%</mo><mo>,</mo></mtd>
+      <mtd><mi>j</mi><mo>∈</mo><msup><mi>J</mi><mo>+</mo></msup><mo>;</mo></mtd></mtr>
+    <mtr><mtd><mfrac><mrow><msub><mi>x</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>−</mo><msub><mi>x</mi><mrow><mn>0</mn><mi>j</mi></mrow></msub></mrow><msub><mi>x</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub></mfrac><mo>·</mo><mn>100</mn><mo>%</mo><mo>,</mo></mtd>
+      <mtd><mi>j</mi><mo>∈</mo><msup><mi>J</mi><mo>−</mo></msup><mo>,</mo></mtd></mtr>
+  </mtable></mrow>
+</math></div>
+<p class="where">где индекс 0 соответствует AM-PPO. Положительное значение <i>δ<sub>ij</sub></i> означает, что AM-PPO лучше
+<i>i</i>-го алгоритма по <i>j</i>-му критерию, отрицательное – что хуже. Результаты приведены в таблицах
+<span class="ref" data-ref="tab:g1..tab:gmean"></span> и на рисунке <span class="ref" data-ref="fig:gains"></span>.</p>
+
+<div class="tbl" data-id="g1"><div class="tbl-cap">Выигрыш AM-PPO в эксперименте 1, %</div><table data-gain="0"></table></div>
+<div class="tbl" data-id="g2"><div class="tbl-cap">Выигрыш AM-PPO в эксперименте 2, %</div><table data-gain="1"></table></div>
+<div class="tbl" data-id="g3"><div class="tbl-cap">Выигрыш AM-PPO в эксперименте 3, %</div><table data-gain="2"></table></div>
+<div class="tbl" data-id="g4"><div class="tbl-cap">Выигрыш AM-PPO в эксперименте 4, %</div><table data-gain="3"></table></div>
+<div class="tbl" data-id="gmean"><div class="tbl-cap">Выигрыш AM-PPO, среднее по экспериментам, %</div><table data-gain="mean"></table></div>
+
+<figure data-id="gains" data-chart="gains">
+  <figcaption>Средний выигрыш (+) и проигрыш (−) алгоритма AM-PPO по критериям</figcaption>
+</figure>
+
+<p>Из таблиц видно, что единственный устойчивый компромисс AM-PPO связан с медианной задержкой: статические
+алгоритмы RR и RC в среднем обеспечивают на 20–36% меньшую медиану, однако ценой задержки <i>p</i><sub>95</sub>,
+большей на 63%, и пропускной способности, меньшей на 64–66%. По отношению к WRR компромисс выражен слабее:
+AM-PPO выигрывает в среднем 2,9% по пропускной способности, 9,7% по <i>p</i><sub>95</sub> и 22,8% по
+<i>p</i><sub>99</sub>, уступая 6,6% по медиане и 9,5% по доле ошибок. Относительно LR проигрыш AM-PPO по
+<i>p</i><sub>99</sub> (8,4%) компенсируется выигрышем по <i>p</i><sub>95</sub> (27,0%) и равномерности загрузки (54,2%).
+Лучшие по каждому критерию алгоритмы сведены в таблицу <span class="ref" data-ref="tab:best"></span>.</p>
+
+<div class="tbl" data-id="best">
+  <div class="tbl-cap">Лучший алгоритм по каждому критерию</div>
+  <table data-table="best"></table>
+</div>
+
+<p>Наличие компромиссов формально описывается отношением доминирования по Парето. Алгоритм <i>a</i> доминирует
+алгоритм <i>b</i>, если он не хуже по всем критериям и строго лучше хотя бы по одному:</p>
+<div class="eq" data-id="pareto"><math display="block">
+  <mi>a</mi><mo>≻</mo><mi>b</mi><mspace width=".5em"/><mo>⇔</mo><mspace width=".5em"/>
+  <mo>∀</mo><mi>j</mi><mo>:</mo><mspace width=".3em"/><msub><mi>x</mi><mrow><mi>a</mi><mi>j</mi></mrow></msub><mo>⪰</mo><msub><mi>x</mi><mrow><mi>b</mi><mi>j</mi></mrow></msub>
+  <mspace width=".5em"/><mo>∧</mo><mspace width=".5em"/>
+  <mo>∃</mo><mi>j</mi><mo>:</mo><mspace width=".3em"/><msub><mi>x</mi><mrow><mi>a</mi><mi>j</mi></mrow></msub><mo>≻</mo><msub><mi>x</mi><mrow><mi>b</mi><mi>j</mi></mrow></msub><mo>,</mo>
+</math></div>
+<p class="where">где отношение «⪰» означает «не хуже» с учётом направления критерия. По полному набору из шести
+критериев почти все алгоритмы оказываются недоминируемыми, поскольку каждый лидирует хотя бы по одному
+показателю; это и обусловливает необходимость свёртки критериев. Если же ограничиться двумя основными критериями –
+пропускной способностью и задержкой <i>p</i><sub>95</sub>, – то в экспериментах 1, 3 и 4 фронт Парето состоит из
+единственного алгоритма AM-PPO, а в эксперименте 2 его разделяют AM-PPO и WRR (рисунок
+<span class="ref" data-ref="fig:tradeoff"></span>).</p>
+
+<figure data-id="tradeoff" data-chart="tradeoff">
+  <figcaption>Компромисс между пропускной способностью и задержкой <i>p</i><sub>95</sub>
+    (обведены алгоритмы фронта Парето, пунктиром показан сам фронт)</figcaption>
+</figure>
+
+<p>Поскольку назначение весов субъективно, выполнен анализ чувствительности: интегральная оценка пересчитана при
+четырёх альтернативных наборах весов (таблица <span class="ref" data-ref="tab:sens"></span>, рисунок
+<span class="ref" data-ref="fig:sens"></span>).</p>
+
+<div class="tbl" data-id="sens">
+  <div class="tbl-cap">Средняя оценка WSM при различных наборах весов</div>
+  <table data-table="sens"></table>
+</div>
+
+<figure data-id="sens" data-chart="sens">
+  <figcaption>Устойчивость рейтинга алгоритмов к выбору весовых коэффициентов</figcaption>
+</figure>
+
+<p>При всех наборах весов порядок алгоритмов сохраняется, меняются лишь абсолютные значения оценок. При
+учёте только пропускной способности и задержки <i>p</i><sub>95</sub> оценка AM-PPO достигает 0,997, то есть
+алгоритм является лучшим по обоим критериям практически во всех экспериментах. При равных весах, когда
+существенное влияние получают медианная задержка и доля ошибок, отрыв AM-PPO сокращается, но сохраняется
+(0,845 против 0,761 у WRR). Таким образом, вывод о преимуществе AM-PPO устойчив к выбору весовых
+коэффициентов.</p>
+
+<!-- ===================================================================== -->
+<h2>4.5. Выводы по главе 4</h2>
+
+<p>С целью экспериментальной проверки разработанного алгоритма развёрнут испытательный стенд, включающий
+неоднородный кластер из четырёх gRPC-серверов с квотами процессорного времени от 0,5 до 2 ядер, прокси-сервер
+Envoy, контроллер балансировки, систему мониторинга и нагрузочный стенд с возможностью эмуляции отказов узлов.
+Разработана методика проведения сравнительных испытаний, при которой все алгоритмы последовательно
+испытываются на одинаковых сценариях нагрузки, а параметры политики AM-PPO фиксируются.</p>
+
+<p>Проведены четыре эксперимента, охватывающие стабильную высокую нагрузку, отказ слабого узла, последовательные
+отказы при умеренной нагрузке и отказ наиболее производительного узла при нагрузке, близкой к предельной. В трёх
+экспериментах из четырёх AM-PPO обеспечил наибольшую пропускную способность, во всех четырёх – наименьшую
+задержку <i>p</i><sub>95</sub>, в трёх из четырёх – наиболее равномерную загрузку процессоров узлов. Статические
+алгоритмы RR и RC в условиях неоднородного кластера уступают AM-PPO по пропускной способности в 1,4–2 раза и
+многократно – по равномерности загрузки.</p>
+
+<p>Для обобщения результатов выполнена мультикритериальная оценка эффективности алгоритмов методами
+аддитивной свёртки, TOPSIS и взвешенных рангов с весовыми коэффициентами, отражающими значимость
+критериев для клиентов сервиса. Все методы дали одинаковое ранжирование: AM-PPO (средняя оценка 0,889), WRR
+(0,820), EMA (0,766), LR (0,680), RR (0,203), RC (0,175). Анализ чувствительности показал, что ранжирование
+сохраняется при изменении весов в широких пределах.</p>
+
+<p>Выявлены следующие преимущества алгоритма AM-PPO:</p>
+<ul class="dash">
+  <li>наибольшая интегральная оценка эффективности во всех исследованных сценариях;</li>
+  <li>одновременное улучшение пропускной способности и задержки <i>p</i><sub>95</sub>, благодаря которому алгоритм
+    единолично образует фронт Парето по этим критериям в трёх сценариях из четырёх;</li>
+  <li>учёт как априорных сведений о квотах ресурсов узлов, так и их текущей загрузки, что обеспечивает
+    равномерное распределение нагрузки в неоднородном кластере;</li>
+  <li>сохранение работоспособности при изменении состава кластера без перенастройки, поскольку архитектура
+    политики не зависит от числа узлов.</li>
+</ul>
+
+<p>Вместе с тем выявлены ограничения алгоритма:</p>
+<ul class="dash">
+  <li>ограничение шага изменения весов, предотвращающее резкие колебания нагрузки, замедляет реакцию на
+    отказ и восстановление узла, вследствие чего при отказе слабого узла WRR незначительно превосходит AM-PPO по
+    пропускной способности;</li>
+  <li>по задержке <i>p</i><sub>99</sub> алгоритм в ряде сценариев уступает LR, принимающему решение для каждого
+    запроса;</li>
+  <li>медианная задержка AM-PPO несколько выше, чем у статических алгоритмов;</li>
+  <li>для работы алгоритма требуются предварительное обучение политики и инфраструктура сбора метрик, а период
+    принятия решений ограничен интервалом опроса системы мониторинга.</li>
+</ul>
+
+<p>По итогам экспериментальных исследований можно заключить, что разработанный алгоритм AM-PPO является
+эффективным средством балансировки нагрузки в неоднородных кластерах, обеспечивая в совокупности лучшие
+показатели пропускной способности и времени отклика по сравнению с классическими и адаптивными алгоритмами,
+в том числе в условиях отказов узлов.</p>
+
+</div>
+
+<script>
+// Numbering starts after the previous chapters.
+const FIG_START = 3;
+const TAB_START = 3;
+const CHAPTER = 4;
+
+const ALGS = ['AM-PPO', 'WRR', 'LR', 'EMA', 'RC', 'RR'];
+const CRITERIA = ['RPS', 'p50', 'p95', 'p99', 'CPU MAD', 'Err'];
+const CRIT_HTML = ['RPS', '<i>p</i><sub>50</sub>, мс', '<i>p</i><sub>95</sub>, мс', '<i>p</i><sub>99</sub>, мс', 'CPU MAD, %', 'Err, %'];
+const BENEFIT = [true, false, false, false, false, false];
+// Throughput and the typical tail (p95) decide; p99, CPU MAD and errors only refine.
+const WEIGHTS = [0.35, 0.15, 0.30, 0.10, 0.05, 0.05];
+const WEIGHT_SETS = [
+  ['Основной', WEIGHTS],
+  ['Только RPS и p95', [0.5, 0, 0.5, 0, 0, 0]],
+  ['Приоритет RPS', [0.5, 0.15, 0.2, 0.05, 0.05, 0.05]],
+  ['Приоритет p95', [0.25, 0.15, 0.4, 0.1, 0.05, 0.05]],
+  ['Равные', [1 / 6, 1 / 6, 1 / 6, 1 / 6, 1 / 6, 1 / 6]],
+];
+const EXPERIMENTS = [
+  [[367.97, 15.62, 325.66, 884.53, 4.16, 0.26], [351.22, 14.15, 329.74, 1311.94, 5.42, 0.63],
+   [310.82, 23.21, 500.30, 744.66, 11.86, 0.48], [318.92, 13.85, 469.36, 1166.70, 4.64, 0.32],
+   [186.48, 15.66, 1175.11, 1803.26, 24.47, 0.40], [206.55, 13.68, 1044.95, 1570.95, 25.61, 0.54]],
+  [[319.07, 15.31, 405.87, 755.90, 3.89, 0.48], [323.37, 14.33, 465.65, 1230.46, 6.80, 0.46],
+   [298.15, 19.54, 523.95, 884.95, 8.84, 0.26], [296.37, 13.90, 491.38, 1200.32, 4.96, 0.66],
+   [174.51, 13.28, 1312.84, 1894.05, 25.02, 1.23], [166.83, 12.41, 1372.73, 1910.99, 27.58, 0.27]],
+  [[626.97, 5.65, 29.51, 80.34, 4.11, 0.13], [610.32, 5.64, 33.07, 82.90, 4.47, 0.08],
+   [559.07, 4.81, 52.73, 92.93, 20.53, 0.33], [572.18, 5.50, 43.86, 88.32, 8.38, 0.26],
+   [464.49, 5.34, 66.56, 105.86, 23.52, 0.27], [434.67, 5.29, 68.42, 130.31, 21.51, 0.17]],
+  [[260.02, 26.47, 647.22, 1376.36, 6.79, 0.52], [246.49, 24.26, 750.69, 1656.97, 6.14, 0.40],
+   [252.57, 34.73, 692.06, 961.86, 8.08, 0.55], [256.83, 17.01, 728.10, 1435.55, 4.54, 0.80],
+   [172.50, 16.78, 1498.03, 1982.57, 24.25, 0.35], [181.68, 13.19, 1534.39, 1941.37, 23.39, 0.34]],
+];
+const EXP_NAMES = ['Эксперимент 1', 'Эксперимент 2', 'Эксперимент 3', 'Эксперимент 4'];
+
+// Grey levels for print: darker is closer to AM-PPO.
+const FILL = { 'AM-PPO': '#1a1a1a', WRR: '#555555', LR: '#888888', EMA: '#b3b3b3', RC: '#d9d9d9', RR: '#ffffff' };
+const DASH = { 'AM-PPO': '', WRR: '9 4', LR: '3 3', EMA: '12 4 3 4', RC: '6 3', RR: '1 3' };
+const MARK = { 'AM-PPO': 'circle', WRR: 'square', LR: 'triangle', EMA: 'diamond', RC: 'circle-open', RR: 'square-open' };
+const INK = '#000';
+const FONT = '"Times New Roman", Times, serif';
+
+// ---------- math ----------
+const col = (x, j) => x.map((row) => row[j]);
+const mean = (arrays) => arrays[0].map((_, i) => arrays.reduce((s, a) => s + a[i], 0) / arrays.length);
+const fmt = (v, d = 2) => v.toFixed(d).replace('.', ',').replace('-', '−');
+
+function normalize(x) {
+  return x.map((row) => row.map((v, j) => {
+    const c = col(x, j), lo = Math.min(...c), hi = Math.max(...c);
+    return BENEFIT[j] ? (v - lo) / (hi - lo) : (hi - v) / (hi - lo);
+  }));
+}
+const wsm = (x, w) => normalize(x).map((row) => row.reduce((s, v, j) => s + v * w[j], 0));
+function topsis(x, w) {
+  const v = x.map((row) => row.map((val, j) => val / Math.hypot(...col(x, j)) * w[j]));
+  const best = CRITERIA.map((_, j) => (BENEFIT[j] ? Math.max : Math.min)(...col(v, j)));
+  const worst = CRITERIA.map((_, j) => (BENEFIT[j] ? Math.min : Math.max)(...col(v, j)));
+  return v.map((row) => {
+    const dBest = Math.hypot(...row.map((val, j) => val - best[j]));
+    const dWorst = Math.hypot(...row.map((val, j) => val - worst[j]));
+    return dWorst / (dBest + dWorst);
+  });
+}
+function ranks(x, w) {
+  const r = x.map(() => CRITERIA.map(() => 0));
+  CRITERIA.forEach((_, j) => {
+    const order = x.map((_, i) => i).sort((a, b) => (BENEFIT[j] ? x[b][j] - x[a][j] : x[a][j] - x[b][j]));
+    order.forEach((i, pos) => { r[i][j] = pos + 1; });
+  });
+  return r.map((row) => row.reduce((s, v, j) => s + v * w[j], 0));
+}
+const gain = (x, i) => x[i].map((v, j) => (BENEFIT[j] ? (x[0][j] - v) / v : (v - x[0][j]) / v) * 100);
+const paretoRpsP95 = (x) => x.map((a, i) => !x.some((b, k) => k !== i && b[0] >= a[0] && b[2] <= a[2] && (b[0] > a[0] || b[2] < a[2])));
+
+const SCORES = EXPERIMENTS.map((x) => wsm(x, WEIGHTS));
+const MEAN_WSM = mean(SCORES);
+const MEAN_TOPSIS = mean(EXPERIMENTS.map((x) => topsis(x, WEIGHTS)));
+const MEAN_RANK = mean(EXPERIMENTS.map((x) => ranks(x, WEIGHTS)));
+const ORDER = ALGS.map((_, i) => i).sort((a, b) => MEAN_WSM[b] - MEAN_WSM[a]);
+
+// ---------- tables ----------
+function fillTables() {
+  const head = (cells) => `<tr>${cells.map((c) => `<th>${c}</th>`).join('')}</tr>`;
+  document.querySelectorAll('table[data-exp]').forEach((t) => {
+    const x = EXPERIMENTS[+t.dataset.exp];
+    const best = CRITERIA.map((_, j) => (BENEFIT[j] ? Math.max : Math.min)(...col(x, j)));
+    t.innerHTML = head(['Алгоритм', ...CRIT_HTML]) + x.map((row, i) => `<tr><td>${ALGS[i]}</td>${
+      row.map((v, j) => `<td${v === best[j] ? ' class="b"' : ''}>${fmt(v)}</td>`).join('')}</tr>`).join('');
+  });
+  document.querySelectorAll('table[data-gain]').forEach((t) => {
+    const key = t.dataset.gain;
+    const rows = ALGS.slice(1).map((_, k) => (key === 'mean'
+      ? mean(EXPERIMENTS.map((x) => gain(x, k + 1)))
+      : gain(EXPERIMENTS[+key], k + 1)));
+    t.innerHTML = head(['Алгоритм', ...CRIT_HTML.map((c) => c.split(',')[0])]) + rows.map((g, k) =>
+      `<tr><td>${ALGS[k + 1]}</td>${g.map((v) => `<td>${v > 0 ? '+' : ''}${fmt(v, 1)}</td>`).join('')}</tr>`).join('');
+  });
+  const scores = document.querySelector('table[data-table="scores"]');
+  scores.innerHTML = head(['Алгоритм', 'Эксп. 1', 'Эксп. 2', 'Эксп. 3', 'Эксп. 4', 'Среднее', 'Место']) +
+    ORDER.map((i, place) => `<tr><td>${ALGS[i]}</td>${SCORES.map((s) => `<td>${fmt(s[i], 3)}</td>`).join('')}` +
+      `<td class="${place === 0 ? 'b' : ''}">${fmt(MEAN_WSM[i], 3)}</td><td>${place + 1}</td></tr>`).join('');
+  const methods = document.querySelector('table[data-table="methods"]');
+  methods.innerHTML = head(['Алгоритм', 'WSM, <i>S̄<sub>i</sub></i>', 'TOPSIS, <i>C̄<sub>i</sub></i>', 'Средний ранг <i>R̄<sub>i</sub></i>', 'Место']) +
+    ORDER.map((i, place) => `<tr><td>${ALGS[i]}</td><td>${fmt(MEAN_WSM[i], 3)}</td><td>${fmt(MEAN_TOPSIS[i], 3)}</td>` +
+      `<td>${fmt(MEAN_RANK[i], 2)}</td><td>${place + 1}</td></tr>`).join('');
+  const best = document.querySelector('table[data-table="best"]');
+  best.innerHTML = head(['Эксперимент', ...CRIT_HTML.map((c) => c.split(',')[0])]) + EXPERIMENTS.map((x, e) => {
+    const winners = CRITERIA.map((_, j) => {
+      const c = col(x, j), target = (BENEFIT[j] ? Math.max : Math.min)(...c);
+      return ALGS[c.indexOf(target)];
+    });
+    return `<tr><td>${e + 1}</td>${winners.map((a) => `<td>${a}</td>`).join('')}</tr>`;
+  }).join('');
+  const sens = document.querySelector('table[data-table="sens"]');
+  sens.innerHTML = head(['Набор весов', ...ORDER.map((i) => ALGS[i])]) + WEIGHT_SETS.map(([label, w]) => {
+    const s = mean(EXPERIMENTS.map((x) => wsm(x, w)));
+    return `<tr><td>${label}</td>${ORDER.map((i) => `<td>${fmt(s[i], 3)}</td>`).join('')}</tr>`;
+  }).join('');
+}
+
+// ---------- svg helpers ----------
+const NS = 'http://www.w3.org/2000/svg';
+function el(tag, attrs = {}, text) {
+  const node = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+function svgRoot(w, h) {
+  const svg = el('svg', { viewBox: `0 0 ${w} ${h}`, width: w, height: h, 'font-family': FONT, 'font-size': 15 });
+  svg.append(el('rect', { width: w, height: h, fill: '#fff' }));
+  return svg;
+}
+function defs(svg, markup) {
+  const node = el('defs');
+  node.innerHTML = markup;
+  svg.append(node);
+}
+const txt = (svg, x, y, s, a = {}) => svg.append(el('text', { x, y, fill: INK, ...a }, s));
+const line = (svg, x1, y1, x2, y2, a = {}) => svg.append(el('line', { x1, y1, x2, y2, stroke: '#cfcfcf', ...a }));
+const bar = (svg, x, y, w, h, alg) => svg.append(el('rect', { x, y, width: Math.max(w, 0), height: Math.max(h, 0), fill: FILL[alg], stroke: INK, 'stroke-width': 0.8 }));
+
+function marker(svg, shape, cx, cy, r) {
+  const filled = !shape.endsWith('-open');
+  const a = { fill: filled ? INK : '#fff', stroke: INK, 'stroke-width': 1.6 };
+  const base = shape.replace('-open', '');
+  if (base === 'circle') svg.append(el('circle', { cx, cy, r, ...a }));
+  if (base === 'square') svg.append(el('rect', { x: cx - r, y: cy - r, width: 2 * r, height: 2 * r, ...a }));
+  if (base === 'triangle') svg.append(el('polygon', { points: `${cx},${cy - r * 1.2} ${cx - r * 1.1},${cy + r * 0.8} ${cx + r * 1.1},${cy + r * 0.8}`, ...a, fill: '#777' }));
+  if (base === 'diamond') svg.append(el('polygon', { points: `${cx},${cy - r * 1.3} ${cx + r * 1.1},${cy} ${cx},${cy + r * 1.3} ${cx - r * 1.1},${cy}`, ...a, fill: '#bbb' }));
+}
+
+function barLegend(svg, x, y, items = ALGS, step = 100) {
+  items.forEach((a, i) => {
+    bar(svg, x + i * step, y - 11, 16, 14, a);
+    txt(svg, x + i * step + 22, y + 1, a);
+  });
+}
+
+// Round axis step (1, 2, 2.5 or 5 times a power of ten) giving about n intervals.
+function niceStep(span, n = 4) {
+  const raw = span / n, p = 10 ** Math.floor(Math.log10(raw));
+  return [1, 2, 2.5, 5, 10].map((m) => m * p).find((s) => s >= raw);
+}
+
+function niceRange(lo, hi, n = 4) {
+  const s = niceStep(hi - lo, n);
+  const a = Math.floor(lo / s) * s, b = Math.ceil(hi / s) * s;
+  return { lo: a, hi: b, ticks: Array.from({ length: Math.round((b - a) / s) + 1 }, (_, k) => a + k * s) };
+}
+
+function gray(t) {
+  const v = Math.round(255 - t * 175);
+  return `rgb(${v},${v},${v})`;
+}
+
+// ---------- charts ----------
+function chartBars(e) {
+  const x = EXPERIMENTS[e];
+  const W = 760, H = 300, top = 34, rowH = 36, svg = svgRoot(W, H);
+  const panels = [[0, 'Пропускная способность, запросов/с', 70, 340], [2, 'Задержка p95, мс', 440, 300]];
+  panels.forEach(([j, title, ox, pw]) => {
+    txt(svg, ox + pw / 2, 20, title, { 'text-anchor': 'middle', 'font-weight': 'bold' });
+    const { hi: max, ticks } = niceRange(0, Math.max(...col(x, j)) * 1.15, 5);
+    ticks.forEach((v) => {
+      const gx = ox + pw * v / max;
+      line(svg, gx, top, gx, top + rowH * ALGS.length);
+      txt(svg, gx, top + rowH * ALGS.length + 18, String(v), { 'text-anchor': 'middle', 'font-size': 13 });
+    });
+    x.forEach((row, i) => {
+      const y = top + rowH * i + 7, w = pw * row[j] / max;
+      bar(svg, ox, y, w, rowH - 14, ALGS[i]);
+      txt(svg, ox + w + 5, y + rowH / 2 - 2, fmt(row[j]), { 'font-size': 13 });
+      if (j === 0) txt(svg, ox - 8, y + rowH / 2 - 2, ALGS[i], { 'text-anchor': 'end' });
+    });
+  });
+  return svg;
+}
+
+function chartScores() {
+  const W = 760, H = 380, L = 56, R = 16, T = 20, B = 80, svg = svgRoot(W, H);
+  const pw = W - L - R, ph = H - T - B;
+  for (let v = 0; v <= 1.0001; v += 0.2) {
+    const y = T + ph * (1 - v);
+    line(svg, L, y, W - R, y);
+    txt(svg, L - 8, y + 5, fmt(v, 1), { 'text-anchor': 'end', 'font-size': 14 });
+  }
+  line(svg, L, T + ph, W - R, T + ph, { stroke: INK });
+  const gw = pw / EXPERIMENTS.length, bw = gw * 0.8 / ALGS.length;
+  EXPERIMENTS.forEach((_, e) => {
+    const gx = L + gw * e + gw * 0.1;
+    ALGS.forEach((a, i) => {
+      const v = SCORES[e][i], h = ph * v;
+      bar(svg, gx + bw * i, T + ph - h, bw - 3, h, a);
+      if (i === 0) txt(svg, gx + bw / 2, T + ph - h - 5, fmt(v), { 'text-anchor': 'middle', 'font-size': 13, 'font-weight': 'bold' });
+    });
+    txt(svg, L + gw * (e + 0.5), T + ph + 22, EXP_NAMES[e], { 'text-anchor': 'middle' });
+  });
+  txt(svg, 16, T + ph / 2, 'Оценка S', { transform: `rotate(-90 16 ${T + ph / 2})`, 'text-anchor': 'middle' });
+  barLegend(svg, (W - 6 * 100) / 2 + 20, H - 16);
+  return svg;
+}
+
+function chartOverall() {
+  const W = 760, H = 340, L = 80, R = 60, T = 16, B = 46, svg = svgRoot(W, H);
+  const pw = W - L - R, rh = (H - T - B) / ALGS.length;
+  for (let v = 0; v <= 1.0001; v += 0.2) {
+    const x = L + pw * v;
+    line(svg, x, T, x, H - B);
+    txt(svg, x, H - B + 18, fmt(v, 1), { 'text-anchor': 'middle', 'font-size': 14 });
+  }
+  ORDER.forEach((i, r) => {
+    const y = T + rh * r + 6, bh = (rh - 12) / 2, a = ALGS[i];
+    bar(svg, L, y, pw * MEAN_WSM[i], bh, a);
+    svg.append(el('rect', { x: L, y: y + bh + 2, width: pw * MEAN_TOPSIS[i], height: bh, fill: 'url(#hatch)', stroke: INK, 'stroke-width': 0.8 }));
+    txt(svg, L + pw * MEAN_WSM[i] + 6, y + bh - 2, fmt(MEAN_WSM[i], 3), { 'font-size': 13 });
+    txt(svg, L + pw * MEAN_TOPSIS[i] + 6, y + 2 * bh, fmt(MEAN_TOPSIS[i], 3), { 'font-size': 13 });
+    txt(svg, L - 10, y + bh + 6, a, { 'text-anchor': 'end' });
+  });
+  defs(svg, '<pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="#fff"/><line x1="0" y1="0" x2="0" y2="6" stroke="#000" stroke-width="1.4"/></pattern>');
+  svg.append(el('rect', { x: W - 290, y: H - 22, width: 16, height: 13, fill: '#555', stroke: INK }));
+  txt(svg, W - 268, H - 11, 'WSM (заливка по алгоритму)', { 'font-size': 13 });
+  svg.append(el('rect', { x: W - 80, y: H - 22, width: 16, height: 13, fill: 'url(#hatch)', stroke: INK }));
+  txt(svg, W - 58, H - 11, 'TOPSIS', { 'font-size': 13 });
+  return svg;
+}
+
+function heatmap(rowLabels, colLabels, valueOf, shadeOf, label) {
+  const W = 760, L = 100, T = 50, cw = (W - L - 16) / colLabels.length, ch = 42;
+  const H = T + ch * rowLabels.length + 10, svg = svgRoot(W, H);
+  colLabels.forEach((c, j) => c.split('\n').forEach((s, k) =>
+    txt(svg, L + cw * (j + 0.5), 20 + k * 18, s, { 'text-anchor': 'middle', 'font-size': k ? 13 : 15, 'font-weight': k ? 'normal' : 'bold' })));
+  rowLabels.forEach((r, i) => {
+    txt(svg, L - 10, T + ch * (i + 0.5) + 5, r, { 'text-anchor': 'end' });
+    colLabels.forEach((_, j) => {
+      const v = valueOf(i, j), t = shadeOf(v);
+      svg.append(el('rect', { x: L + cw * j, y: T + ch * i, width: cw, height: ch, fill: gray(t), stroke: INK, 'stroke-width': 0.8 }));
+      txt(svg, L + cw * (j + 0.5), T + ch * (i + 0.5) + 5, label(v), { 'text-anchor': 'middle', fill: t > 0.6 ? '#fff' : INK, 'font-weight': 'bold' });
+    });
+  });
+  return svg;
+}
+
+function chartHeat() {
+  const norm = mean(EXPERIMENTS.map(normalize).map((m) => m.flat()));
+  return heatmap(ALGS, CRITERIA.map((c, j) => `${c}\nw = ${fmt(WEIGHTS[j])}`),
+    (i, j) => norm[i * CRITERIA.length + j], (v) => v, (v) => fmt(v));
+}
+
+function chartGains() {
+  const g = mean(EXPERIMENTS.map((x) => ALGS.slice(1).map((_, k) => gain(x, k + 1)).flat()));
+  return heatmap(ALGS.slice(1).map((a) => `vs ${a}`), CRITERIA,
+    (i, j) => g[i * CRITERIA.length + j], (v) => Math.max(0, Math.min(1, v / 80)),
+    (v) => `${v > 0 ? '+' : ''}${fmt(v, 0)}%`);
+}
+
+// Puts each point label on the first side that hits neither another label nor a point.
+function placeLabels(svg, points, left, right) {
+  const boxes = points.map((p) => ({ x: p.cx - p.r, y: p.cy - p.r, w: 2 * p.r, h: 2 * p.r }));
+  const hit = (b) => boxes.some((o) => b.x < o.x + o.w && o.x < b.x + b.w && b.y < o.y + o.h && o.y < b.y + b.h);
+  for (const p of points) {
+    const w = p.a.length * 8.5 + 4, h = 15, g = p.r + 3;
+    const options = [
+      [p.cx + g, p.cy - h / 2], [p.cx - g - w, p.cy - h / 2],
+      [p.cx - w / 2, p.cy - g - h], [p.cx - w / 2, p.cy + g],
+      [p.cx + g, p.cy - h - 4], [p.cx + g, p.cy + 4], [p.cx - g - w, p.cy - h - 4], [p.cx - g - w, p.cy + 4],
+      [p.cx - w / 2, p.cy - g - 2 * h], [p.cx - w / 2, p.cy + g + h],
+    ];
+    const fits = options.map(([x, y]) => ({ x, y, w, h })).filter((b) => b.x >= left && b.x + b.w <= right);
+    const b = fits.find((o) => !hit(o)) ?? fits[0];
+    boxes.push(b);
+    txt(svg, b.x + 2, b.y + h - 3, p.a, { 'font-size': 14 });
+  }
+}
+
+function chartTradeoff() {
+  const W = 1000, H = 760, pad = { l: 66, r: 20, t: 40, b: 52 }, svg = svgRoot(W, H);
+  const cw = W / 2, chh = (H - 30) / 2;
+  EXPERIMENTS.forEach((x, e) => {
+    const ox = (e % 2) * cw, oy = Math.floor(e / 2) * chh;
+    const pw = cw - pad.l - pad.r, ph = chh - pad.t - pad.b;
+    const rps = col(x, 0), p95 = col(x, 2);
+    const xr = niceRange(Math.min(...p95) * 0.75, Math.max(...p95) * 1.08);
+    const yr = niceRange(Math.min(...rps) * 0.9, Math.max(...rps) * 1.05);
+    const xmin = xr.lo, xmax = xr.hi, ymin = yr.lo, ymax = yr.hi;
+    const sx = (v) => ox + pad.l + (v - xmin) / (xmax - xmin) * pw;
+    const sy = (v) => oy + pad.t + ph - (v - ymin) / (ymax - ymin) * ph;
+    txt(svg, ox + pad.l + pw / 2, oy + 24, EXP_NAMES[e], { 'text-anchor': 'middle', 'font-weight': 'bold' });
+    svg.append(el('rect', { x: ox + pad.l, y: oy + pad.t, width: pw, height: ph, fill: 'none', stroke: INK, 'stroke-width': 0.8 }));
+    xr.ticks.forEach((v, k) => {
+      if (k > 0 && k < xr.ticks.length - 1) line(svg, sx(v), oy + pad.t, sx(v), oy + pad.t + ph);
+      txt(svg, sx(v), oy + pad.t + ph + 17, String(v), { 'text-anchor': 'middle', 'font-size': 13 });
+    });
+    yr.ticks.forEach((v, k) => {
+      if (k > 0 && k < yr.ticks.length - 1) line(svg, ox + pad.l, sy(v), ox + pad.l + pw, sy(v));
+      txt(svg, ox + pad.l - 6, sy(v) + 4, String(v), { 'text-anchor': 'end', 'font-size': 13 });
+    });
+    txt(svg, ox + pad.l + pw / 2, oy + pad.t + ph + 37, 'p95, мс', { 'text-anchor': 'middle', 'font-size': 14 });
+    txt(svg, ox + 16, oy + pad.t + ph / 2, 'RPS', { transform: `rotate(-90 ${ox + 16} ${oy + pad.t + ph / 2})`, 'text-anchor': 'middle', 'font-size': 14 });
+    const front = paretoRpsP95(x);
+    const pts = x.map((r, i) => [r[2], r[0], i]).filter((p) => front[p[2]]).sort((a, b) => a[0] - b[0]);
+    if (pts.length > 1) {
+      svg.append(el('polyline', { points: pts.map(([a, b]) => `${sx(a)},${sy(b)}`).join(' '), fill: 'none', stroke: INK, 'stroke-dasharray': '6 4', 'stroke-width': 1.2 }));
+    }
+    const placed = [];
+    x.forEach((r, i) => {
+      const cx = sx(r[2]), cy = sy(r[0]);
+      if (front[i]) svg.append(el('circle', { cx, cy, r: 12, fill: 'none', stroke: INK, 'stroke-width': 1 }));
+      marker(svg, MARK[ALGS[i]], cx, cy, 6);
+      placed.push({ cx, cy, a: ALGS[i], r: front[i] ? 13 : 8 });
+    });
+    placeLabels(svg, placed, ox + pad.l, ox + pad.l + pw);
+  });
+  return svg;
+}
+
+function chartSens() {
+  const W = 760, H = 380, L = 56, R = 20, T = 20, B = 92, svg = svgRoot(W, H);
+  const pw = W - L - R, ph = H - T - B;
+  const sets = WEIGHT_SETS.map(([, w]) => mean(EXPERIMENTS.map((x) => wsm(x, w))));
+  for (let v = 0; v <= 1.0001; v += 0.2) {
+    const y = T + ph * (1 - v);
+    line(svg, L, y, W - R, y);
+    txt(svg, L - 8, y + 5, fmt(v, 1), { 'text-anchor': 'end', 'font-size': 14 });
+  }
+  const sx = (k) => L + pw * (k + 0.5) / WEIGHT_SETS.length;
+  WEIGHT_SETS.forEach(([label], k) => txt(svg, sx(k), T + ph + 22, label, { 'text-anchor': 'middle', 'font-size': 14 }));
+  ALGS.forEach((a, i) => {
+    svg.append(el('polyline', { points: sets.map((s, k) => `${sx(k)},${T + ph * (1 - s[i])}`).join(' '), fill: 'none',
+      stroke: INK, 'stroke-width': a === 'AM-PPO' ? 2.6 : 1.5, 'stroke-dasharray': DASH[a] }));
+    sets.forEach((s, k) => marker(svg, MARK[a], sx(k), T + ph * (1 - s[i]), 5));
+  });
+  const lx = (W - 6 * 112) / 2;
+  ALGS.forEach((a, i) => {
+    const x0 = lx + i * 112, y0 = H - 22;
+    svg.append(el('line', { x1: x0, y1: y0, x2: x0 + 34, y2: y0, stroke: INK, 'stroke-width': a === 'AM-PPO' ? 2.6 : 1.5, 'stroke-dasharray': DASH[a] }));
+    marker(svg, MARK[a], x0 + 17, y0, 5);
+    txt(svg, x0 + 40, y0 + 5, a, { 'font-size': 14 });
+  });
+  return svg;
+}
+
+const CHARTS = {
+  scores: chartScores, overall: chartOverall, heat: chartHeat,
+  gains: chartGains, tradeoff: chartTradeoff, sens: chartSens,
+};
+
+function savePng(svg, name) {
+  const scale = 4, w = +svg.getAttribute('width'), h = +svg.getAttribute('height');
+  const img = new Image();
+  img.onload = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = w * scale; canvas.height = h * scale;
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob((blob) => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${name}.png`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }, 'image/png');
+  };
+  img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(svg));
+}
+
+function renderFigures() {
+  document.querySelectorAll('figure').forEach((fig) => {
+    const cap = fig.querySelector('figcaption');
+    let svg = null;
+    if (fig.dataset.chart === 'bars') svg = chartBars(+fig.dataset.exp);
+    else if (fig.dataset.chart) svg = CHARTS[fig.dataset.chart]();
+    if (svg) {
+      fig.insertBefore(svg, cap);
+      const btn = document.createElement('button');
+      btn.className = 'png-btn';
+      btn.textContent = 'PNG';
+      btn.onclick = () => savePng(svg, `fig-${fig.dataset.number}-${fig.dataset.id}`);
+      fig.append(btn);
+    }
+    if (fig.dataset.img) {
+      const img = new Image();
+      img.alt = cap.textContent;
+      img.onerror = () => {
+        const box = document.createElement('div');
+        box.className = 'placeholder';
+        box.innerHTML = `Рисунок отсутствует: поместите файл <b>${fig.dataset.img}</b>`;
+        img.replaceWith(box);
+      };
+      img.src = fig.dataset.img;
+      fig.insertBefore(img, cap);
+    }
+  });
+}
+
+function numberAll() {
+  const numbers = {};
+  document.querySelectorAll('figure[data-id]').forEach((fig, k) => {
+    const n = FIG_START + k;
+    numbers[`fig:${fig.dataset.id}`] = n;
+    fig.dataset.number = n;
+    fig.querySelector('figcaption').insertAdjacentText('afterbegin', `Рисунок ${n} – `);
+  });
+  document.querySelectorAll('.tbl[data-id]').forEach((t, k) => {
+    const n = TAB_START + k;
+    numbers[`tab:${t.dataset.id}`] = n;
+    t.querySelector('.tbl-cap').insertAdjacentText('afterbegin', `Таблица ${n} – `);
+  });
+  document.querySelectorAll('.eq[data-id]').forEach((eq, k) => {
+    const n = `${CHAPTER}.${k + 1}`;
+    numbers[`eq:${eq.dataset.id}`] = `(${n})`;
+    const num = document.createElement('span');
+    num.className = 'eq-num';
+    num.textContent = `(${n})`;
+    eq.append(num);
+  });
+  document.querySelectorAll('.ref').forEach((ref) => {
+    const [a, b] = ref.dataset.ref.split('..');
+    ref.textContent = b ? `${numbers[a]}–${numbers[b]}` : numbers[a];
+  });
+}
+
+numberAll();
+fillTables();
+renderFigures();
+</script>
+</body>
+</html>
